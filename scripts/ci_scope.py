@@ -30,8 +30,8 @@ WINDOWS_DIRS = [
     "internal/linearprovider", "internal/mcpserver", "internal/mirror", "internal/notify",
     "internal/outbox", "internal/playbook", "internal/principal", "internal/remote",
     "internal/runner", "internal/secretenv", "internal/selfupdate", "internal/server",
-    "internal/setup", "internal/skill", "internal/transporterr", "internal/tui", "internal/uiflow",
-    "internal/watcher",
+    "internal/setup", "internal/skill", "internal/transporterr", "internal/tui",
+    "internal/uiflow", "internal/uiflow/onboarding", "internal/watcher",
 ]
 # The packages agentd's image builds (go list -deps ./cmd/clawbridge-agentd).
 AGENTD_DIRS = ["cmd/clawbridge-agentd", "internal/agentd", "internal/transporterr"]

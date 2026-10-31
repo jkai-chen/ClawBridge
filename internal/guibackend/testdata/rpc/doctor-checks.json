@@ -1,0 +1,16 @@
+{
+  "description": "doctor.checks answers doctor's report",
+  "request": {"jsonrpc": "2.0", "id": 5, "method": "doctor.checks"},
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "result": {
+      "status": "warn",
+      "generated_at": "2026-01-02T03:04:05Z",
+      "checks": [
+        {"id": "profile", "title": "Profile", "status": "pass", "message": "profile found", "path": "/home/example/.config/clawbridge/config.toml"},
+        {"id": "skill", "title": "Skill", "status": "warn", "message": "skill not installed", "action": "clawbridge skill install"}
+      ]
+    }
+  }
+}

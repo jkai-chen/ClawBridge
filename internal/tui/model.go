@@ -15,6 +15,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/clirender"
+	"clawbridge/internal/uiflow"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -1376,13 +1377,7 @@ func (m Model) snapshot() Snapshot {
 }
 
 func (m Model) writesBlocked() bool {
-	if m.cfg.Mode != ModeCloud {
-		return false
-	}
-	if m.online != nil && !*m.online {
-		return true
-	}
-	return m.source == "offline-mirror"
+	return uiflow.WriteGate{Cloud: m.cfg.Mode == ModeCloud, Online: m.online, Source: m.source}.Blocked()
 }
 
 func (m Model) currentRows() []string {

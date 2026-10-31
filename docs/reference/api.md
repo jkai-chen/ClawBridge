@@ -1150,8 +1150,10 @@ pass one. No check reads a secret or writes anything.
 --instance ID --region R [--profile P] [--account N]) [--value-stdin]` writes one server setting the user holds, so it never passes
 through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
 `CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET`, or an S3-compatible backup store's
-`CLAWBRIDGE_BACKUP_ACCESS_KEY_ID` and `CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY` (the
-two OAuth client secrets went with Google sign-in in v1.0). The value is read
+`CLAWBRIDGE_BACKUP_ACCESS_KEY_ID` and `CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY`, or
+the Linear webhooks' `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS` (the whole
+`TEAM_UUID=SECRET[,…]` line, checked as the server checks it before it is
+sent; the two OAuth client secrets went with Google sign-in in v1.0). The value is read
 from a hidden prompt, or
 from a pipe with `--value-stdin`; it must be one line of printable ASCII without
 whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It

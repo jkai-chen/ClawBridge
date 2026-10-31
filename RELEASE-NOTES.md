@@ -1,3 +1,15 @@
+# Unreleased
+
+## Operations
+
+- **`clawbridge cloud secret set` sets the Linear webhook secrets.** `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS` (the whole
+  `TEAM_UUID=SECRET[,…]` line) joins the keys it writes, at a hidden prompt over the person's own SSH, gcloud or SSM
+  route, never through an agent. The line is checked the way the server checks it, and a bad one is refused before
+  anything is sent, naming the entry, never the value; the command replaces the line, so adding a team means
+  entering every entry again. docs/operations/deployment.md also now runs the webhook probe with `exec` in the
+  running `api` container (`--public-origin http://127.0.0.1:8080`), says the redaction `sed` matches YAML renders
+  only, and edits a linked env file through its target. No schema change. Linear config scope: none.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

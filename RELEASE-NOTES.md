@@ -1,4 +1,4 @@
-# Unreleased
+# ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own
 machine, a VM they already have, Google Cloud or AWS), invite a colleague and run agents on Linear with it, without

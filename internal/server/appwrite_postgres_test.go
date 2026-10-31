@@ -211,6 +211,10 @@ type awMCP struct {
 	saved    []map[string]any
 	comments []map[string]any
 	issues   map[string]string
+	// texts and updated, when an issue has them, are the description and
+	// updatedAt get_issue answers; an update sets the text and moves the
+	// time (FR29).
+	texts, updated map[string]string
 	// refuse is how many save_comment or save_issue calls Linear answers 429 at HTTP,
 	// before any tool runs.
 	refuse int
@@ -315,12 +319,27 @@ func newAWMCP(t *testing.T) (*awMCP, *httptest.Server) {
 		if team == awOtherTeam {
 			identifier = "OTH-9"
 		}
-		return text(map[string]any{"id": identifier, "uuid": str(a, "id"), "teamId": team, "projectId": nil, "title": "synthetic", "status": "Backlog", "statusType": "backlog", "assignee": nil, "url": "https://linear.example/issue/" + identifier, "parentId": nil, "relations": map[string]any{"blocks": []any{}, "blockedBy": []any{}, "relatedTo": []any{}, "duplicateOf": nil}, "labels": []any{}, "assigneeId": nil}), nil
+		issue := map[string]any{"id": identifier, "uuid": str(a, "id"), "teamId": team, "projectId": nil, "title": "synthetic", "status": "Backlog", "statusType": "backlog", "assignee": nil, "url": "https://linear.example/issue/" + identifier, "parentId": nil, "relations": map[string]any{"blocks": []any{}, "blockedBy": []any{}, "relatedTo": []any{}, "duplicateOf": nil}, "labels": []any{}, "assigneeId": nil}
+		m.mu.Lock()
+		if description, ok := m.texts[str(a, "id")]; ok {
+			issue["description"], issue["updatedAt"] = description, m.updated[str(a, "id")]
+		}
+		m.mu.Unlock()
+		return text(issue), nil
 	})
 	srv.AddTool(awSaveIssueTool(t), func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		a := args(req)
 		m.mu.Lock()
 		m.calls["save_issue"]++
+		if id := str(a, "id"); id != "" {
+			// An update of a known issue: its new text, a later time.
+			team := m.issues[id]
+			if _, ok := a["description"]; ok && m.texts != nil {
+				m.texts[id], m.updated[id] = str(a, "description"), "2026-10-31T10:00:00.000Z"
+			}
+			m.mu.Unlock()
+			return text(map[string]any{"id": "SYN-6", "uuid": id, "teamId": team, "projectId": nil, "title": "synthetic", "description": str(a, "description"), "status": "Backlog", "statusType": "backlog", "assignee": nil, "url": "https://linear.example/issue/SYN-6", "parentId": nil, "relations": map[string]any{"blocks": []any{}, "blockedBy": []any{}, "relatedTo": []any{}, "duplicateOf": nil}, "labels": []any{}, "assigneeId": nil}), nil
+		}
 		m.issues[awCreatedIssue] = str(a, "team")
 		m.mu.Unlock()
 		// A create: the answer carries the new issue's identifier and UUID.
@@ -616,6 +635,9 @@ func TestPostgresAppStatusReportsTheBoundTeams(t *testing.T) {
 	data, _ := out.Data.(map[string]any)
 	if data["app_user_id"] != awAppUser || data["linear_org_id"] != awOrg {
 		t.Fatal("status identity", data)
+	}
+	if data["description_guard_updated_at"] != true {
+		t.Fatal("status does not offer expected_updated_at", data)
 	}
 	if _, failed := data["binding"]; failed {
 		t.Fatal("binding unread", data["binding"])

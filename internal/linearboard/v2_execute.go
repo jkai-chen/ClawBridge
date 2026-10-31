@@ -12,13 +12,14 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after", "view_id"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "issue_history": {"id", "limit", "cursor"}, "labels": {"team_id", "limit", "cursor"}, "views": {"team_id", "kind", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id", "priority", "due_date"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "parent_id", "assignee_id", "priority", "due_date"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}, "cancel": {"id", "reason", "operation_id"}, "duplicate": {"id", "duplicate_of", "reason", "operation_id"}, "project_status": {"linear_project", "suggest"}, "project_status_set": {"linear_project", "type", "status_id", "operation_id", "confirm", "expected_status_id", "allow_open"}, "issue_move": {"id", "team_id", "operation_id", "confirm", "expected_plan_sha256", "family"}, "project_add_team": {"linear_project", "team_id", "operation_id", "confirm", "expected_plan_sha256"}, "project_plan": {"linear_project", "priority", "target_date", "start_date", "operation_id", "confirm", "expected_plan_sha256"}}
+	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after", "view_id"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "issue_history": {"id", "limit", "cursor"}, "labels": {"team_id", "limit", "cursor"}, "views": {"team_id", "kind", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id", "priority", "due_date"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "expected_updated_at", "parent_id", "assignee_id", "priority", "due_date"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}, "cancel": {"id", "reason", "operation_id"}, "duplicate": {"id", "duplicate_of", "reason", "operation_id"}, "project_status": {"linear_project", "suggest"}, "project_status_set": {"linear_project", "type", "status_id", "operation_id", "confirm", "expected_status_id", "allow_open"}, "issue_move": {"id", "team_id", "operation_id", "confirm", "expected_plan_sha256", "family"}, "project_add_team": {"linear_project", "team_id", "operation_id", "confirm", "expected_plan_sha256"}, "project_plan": {"linear_project", "priority", "target_date", "start_date", "operation_id", "confirm", "expected_plan_sha256"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
 	}
 	for key, value := range args {
-		if !contains(keys, key) {
+		// expected_updated_at is the client's, sent to the app writer only.
+		if !contains(keys, key) || key == "expected_updated_at" && !s.cfg.UpdatedAtGuard {
 			return nil, errors.New("unknown task-board V2 argument")
 		}
 		if key == "project_id" || key == "parent_id" || key == "assignee_id" {
@@ -172,7 +173,7 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 func parseWriteArgsV2(operation string, args map[string]any) (WriteInputV2, error) {
 	text := func(key string) string { v, _ := args[key].(string); return v }
 	in := WriteInputV2{WriteInput: WriteInput{Operation: operation, OperationID: text("operation_id"), IssueID: text("id"), Body: text("body")}, TeamID: text("team_id"), InResponseTo: text("in_response_to")}
-	for key, target := range map[string]**string{"title": &in.Title, "description": &in.Description, "state_id": &in.StateID, "expected_title": &in.ExpectedTitle, "expected_description_sha256": &in.ExpectedDescriptionSHA256} {
+	for key, target := range map[string]**string{"title": &in.Title, "description": &in.Description, "state_id": &in.StateID, "expected_title": &in.ExpectedTitle, "expected_description_sha256": &in.ExpectedDescriptionSHA256, "expected_updated_at": &in.ExpectedUpdatedAt} {
 		if _, ok := args[key]; ok {
 			v := text(key)
 			*target = &v

@@ -303,3 +303,22 @@ func TestCancelAndDuplicateAreAppWrites(t *testing.T) {
 		}
 	}
 }
+
+// expected_updated_at is a precondition read just before sending: the
+// write's digest leaves it out, so a repeat of the same operation_id is the
+// same write; the caller's map keeps it (FR29).
+func TestWriteDigestLeavesOutExpectedUpdatedAt(t *testing.T) {
+	args := map[string]any{"id": "i", "operation_id": "o", "description": "d", "expected_description_sha256": "s", "expected_updated_at": "2026-10-31T09:05:12.340Z"}
+	other := map[string]any{"id": "i", "operation_id": "o", "description": "d", "expected_description_sha256": "s", "expected_updated_at": "2026-10-31T10:00:00Z"}
+	without := map[string]any{"id": "i", "operation_id": "o", "description": "d", "expected_description_sha256": "s"}
+	if writeDigest("update", args) != writeDigest("update", other) || writeDigest("update", args) != writeDigest("update", without) {
+		t.Fatal("expected_updated_at moved the write digest")
+	}
+	if _, ok := args["expected_updated_at"]; !ok {
+		t.Fatal("the digest dropped expected_updated_at from the stored arguments")
+	}
+	without["description"] = "other"
+	if writeDigest("update", args) == writeDigest("update", without) {
+		t.Fatal("the digest ignores the write itself")
+	}
+}

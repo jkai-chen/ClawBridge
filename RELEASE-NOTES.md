@@ -1,3 +1,15 @@
+# Unreleased
+
+## Linear
+
+- **The description guard works on servers that write as the ClawBridge app** (lifts the 1.0 known limit). An
+  update with `--expect-description-sha256` (`expected_description_sha256`) on a description that mentions issues is
+  no longer refused when nothing changed. The client re-reads the issue with your own profile just before sending and
+  checks the hash there; the server checks that the issue's `updated_at` is unchanged since that read, or that the
+  hash matches its own read, and otherwise refuses, sending nothing. A queued update is checked again when it is
+  sent. It needs the server and the client on this release; an older client keeps the 1.0 behaviour
+  (`clawbridge self-update`). No schema change. Linear config scope: none.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

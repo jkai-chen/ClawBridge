@@ -160,6 +160,13 @@ type WriteInputV2 struct {
 	// digest of unguarded writes identical to v0.2.0.
 	ExpectedTitle             *string `json:",omitempty"`
 	ExpectedDescriptionSHA256 *string `json:",omitempty"`
+	// ExpectedUpdatedAt is the updated_at of the client's own fresh read
+	// whose description matched ExpectedDescriptionSHA256: on an app write,
+	// an issue the server reads as unchanged since then passes the
+	// description guard however Linear renders the text to the app (FR29).
+	// It is a precondition, not intent: left out of the ledger digest, so
+	// a retry of the same operation_id replays.
+	ExpectedUpdatedAt *string `json:"-"`
 	// AddLabels and RemoveLabels change single labels without replacing the
 	// set; omitempty keeps the ledger digest of other writes unchanged.
 	AddLabels    []string `json:",omitempty"`

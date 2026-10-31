@@ -59,6 +59,10 @@ type Config struct {
 	// the ClawBridge app: the server charges their calls to the project's
 	// hourly budget itself, so they are never budgeted again (FR8).
 	ServerCharged bool
+	// UpdatedAtGuard is set only for the server's app writes: they accept
+	// expected_updated_at, the updated_at of the client's own read that
+	// matched expected_description_sha256 (FR29).
+	UpdatedAtGuard bool
 	// IssueState, when set, reads an issue's current workflow state ID and
 	// team from an authoritative source: on a hosted server, the Linear
 	// app's GraphQL. Linear's MCP issue read names the state without its

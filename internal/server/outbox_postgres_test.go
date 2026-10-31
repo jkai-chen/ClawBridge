@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -629,5 +630,50 @@ func TestPostgresOutboxQueuedCreateSettlesWithItsUUID(t *testing.T) {
 	f.later(4 * time.Minute)
 	if got := status("fr16-comment"); got["result_id"] != nil || got["result_identifier"] != nil {
 		t.Fatal("a comment carries the create's fields:", got)
+	}
+}
+
+// A queued description update whose guard came with expected_updated_at
+// (FR29) is checked again when the worker sends it: an issue unchanged
+// since the client's read goes, although the app reads its mention tags
+// differently; one edited while it waited fails, nothing sent. A repeat
+// with another expected_updated_at is the same write.
+func TestPostgresOutboxQueuedDescriptionGuard(t *testing.T) {
+	f := newOutboxFixture(t)
+	memberText := `See <issue id="00000000-0000-0000-0000-0000000000a1" href="https://linear.example.test/x/issue/T-1">T-1</issue> first.`
+	sum := sha256.Sum256([]byte(memberText))
+	f.mcp.mu.Lock()
+	f.mcp.texts = map[string]string{awIssue: "See [T-1](https://linear.example.test/x/issue/T-1) first."}
+	f.mcp.updated = map[string]string{awIssue: "2026-10-31T09:05:12.340Z"}
+	f.mcp.mu.Unlock()
+	update := func(op, at string) (bus.Result, error) {
+		return f.queueWrite("update", map[string]any{"id": awIssue, "operation_id": op, "description": "synthetic new text", "expected_description_sha256": hex.EncodeToString(sum[:]), "expected_updated_at": at})
+	}
+	f.mcp.refuse = 1
+	if res, err := update("fr29-unchanged", "2026-10-31T09:05:12.34+00:00"); err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("not queued:", res, err)
+	}
+	f.mcp.refuse = 0
+	f.later(2 * time.Minute)
+	if q := f.queued("fr29-unchanged"); q.State != bus.OutboxDone || f.mcp.count("save_issue") != 1 {
+		t.Fatal("an unchanged mentioned description was refused from the queue:", q.State, q.Reason)
+	}
+	// The issue now reads as updated at 10:00; the next update is queued
+	// with that time, and someone edits the issue while it waits.
+	f.mcp.refuse = 1
+	if res, err := update("fr29-edited", "2026-10-31T10:00:00.000Z"); err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("not queued:", res, err)
+	}
+	if res, err := update("fr29-edited", "2026-10-31T10:00:00Z"); err != nil || awJSON(t, res.Data)["outcome"] != "queued" {
+		t.Fatal("a repeat with another expected_updated_at was a different write:", res, err)
+	}
+	f.mcp.mu.Lock()
+	f.mcp.texts[awIssue], f.mcp.updated[awIssue] = "A person's edit.", "2026-10-31T10:30:00.000Z"
+	f.mcp.mu.Unlock()
+	f.mcp.refuse = 0
+	f.later(4 * time.Minute)
+	q := f.queued("fr29-edited")
+	if q.State != bus.OutboxFailed || !strings.Contains(q.Reason, "differs from expected_description_sha256") || f.mcp.count("save_issue") != 1 {
+		t.Fatal("an edit made while the write waited was overwritten:", q.State, q.Reason, f.mcp.count("save_issue"))
 	}
 }

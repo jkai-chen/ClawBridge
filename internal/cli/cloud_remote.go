@@ -303,7 +303,7 @@ func (p *cloudProbe) cloudSession(ctx context.Context, check string) (cloudExecu
 	}
 	workspace, project, err := client.ResolveProject(ctx, p.config.Workspace, p.config.Project, "")
 	if err != nil {
-		return fail("no_workspace", "run clawbridge setup --cloud to create the workspace and its first project")
+		return fail("no_workspace", "no project to check: create the first with clawbridge project create NAME (it becomes this profile's default), or set CLAWBRIDGE_PROJECT=NAME")
 	}
 	return client, workspace, project, nil
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -48,6 +49,76 @@ func TestFirstLocalProjectBecomesTheDefault(t *testing.T) {
 		t.Fatal(string(raw))
 	}
 	invoke(t, "register", "eng", "--instance", "eng-i")
+}
+
+// A hosted (cloud) profile's default is saved the same way: only when it has
+// none, never replacing one, and keeping every other key, its device
+// credential included, owner-only.
+func TestCloudProfileKeepsItsFirstDefaultProject(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "client.toml")
+	profile := "mode = 'cloud'\nserver = 'https://clawbridge.example.test'\nprincipal = 'owner@example.test'\ncredential_source = 'device'\ndevice_id = 'dev_example'\nkey_store = 'keyring'\nworkspace = 'w'\n"
+	if err := os.WriteFile(path, []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultProject(path, "cloud", "first", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultProject(path, "cloud", "second", false); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	for _, want := range []string{"project = 'first'", "device_id = 'dev_example'", "key_store = 'keyring'", "credential_source = 'device'", "mode = 'cloud'", "server = 'https://clawbridge.example.test'"} {
+		if !strings.Contains(strings.ReplaceAll(string(raw), `"`, "'"), want) {
+			t.Fatalf("missing %s in:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(string(raw), "second") {
+		t.Fatal("a later project replaced the default:\n" + string(raw))
+	}
+	if info, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		t.Fatal(info.Mode(), err)
+	}
+	// A default the person chose is kept, too.
+	chosen := filepath.Join(t.TempDir(), "chosen.toml")
+	if err := os.WriteFile(chosen, []byte(profile+"project = 'mine'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultProject(chosen, "cloud", "other", false); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(chosen); !strings.Contains(strings.ReplaceAll(string(raw), `"`, "'"), "project = 'mine'") || strings.Contains(string(raw), "other") {
+		t.Fatal(string(raw))
+	}
+}
+
+// A profile set only by the environment (a CI device's) has no file: nothing
+// is written and nothing fails. A file for another mode than the one in effect
+// is left alone: a hosted project never lands in a local profile.
+func TestDefaultProjectNeedsAFileOfTheSameMode(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent.toml")
+	if err := writeDefaultProject(missing, "cloud", "p", false); err != nil {
+		t.Fatal("a profile without a file:", err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("a file was created for an environment-only profile:", err)
+	}
+	local := filepath.Join(t.TempDir(), "local.toml")
+	if err := os.WriteFile(local, []byte("workspace = 'demo'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDefaultProject(local, "cloud", "hosted", false); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(local); strings.Contains(string(raw), "hosted") {
+		t.Fatal("a hosted project landed in a local profile:\n" + string(raw))
+	}
+	// The same mode-less file is local: a local project is its default.
+	if err := writeDefaultProject(local, "local", "mine", false); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(local); !strings.Contains(strings.ReplaceAll(string(raw), `"`, "'"), "project = 'mine'") {
+		t.Fatal(string(raw))
+	}
 }
 
 // A local profile with no project yet gets local guidance, never the

@@ -1,0 +1,149 @@
+# The desktop GUI (gui/): frontend checks, backend-launcher tests and a build
+# on each OS. It runs only for changes under gui/ and to this file. It is not
+# called by, and does not gate, the release workflows: the GUI ships on its
+# own track.
+name: GUI
+on:
+  push:
+    branches: [main]
+    paths: ['gui/**', '.github/workflows/gui.yml']
+  pull_request:
+    paths: ['gui/**', '.github/workflows/gui.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gui-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: gui/frontend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      # Bans innerHTML, outerHTML, insertAdjacentHTML and document.write.
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+  launcher:
+    # The backend launcher's own tests (preamble sync, framing, the nonce and
+    # allow-list refusals, the UTF-16 distro decode). No window, no webview.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: gui/go.mod
+          cache-dependency-path: gui/go.sum
+      - run: go vet ./backend/
+      - run: go test -p 2 -count=1 ./backend/
+  build:
+    needs: [frontend, launcher]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, tags: "", pkgs: "" }
+          - { os: windows-latest, tags: "", pkgs: "" }
+          - { os: ubuntu-24.04, tags: "gtk3", pkgs: "libgtk-3-dev libwebkit2gtk-4.1-dev xvfb" }
+          - { os: ubuntu-22.04, tags: "gtk3", pkgs: "libgtk-3-dev libwebkit2gtk-4.1-dev xvfb" }
+    runs-on: ${{ matrix.os }}
+    name: build (${{ matrix.os }}${{ matrix.tags != '' && format(' -tags {0}', matrix.tags) || '' }})
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: gui/go.mod
+          cache-dependency-path: gui/go.sum
+      - name: Linux webview headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.pkgs }}
+      - name: Build the frontend (the Go build embeds gui/frontend/dist)
+        working-directory: gui/frontend
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - name: Build the app
+        working-directory: gui
+        shell: bash
+        run: |
+          go build -p 2 -tags "${{ matrix.tags }}" -ldflags "-X main.Version=ci-${GITHUB_SHA::7}" -o gui-app$([ "$RUNNER_OS" = Windows ] && echo .exe) .
+          ls -la gui-app*
+      # Loads the built dist in the real webview with the real Wails runtime
+      # and no client. Fails unless the shell rendered and the webview
+      # reported no Content-Security-Policy or Trusted Types violation.
+      - name: Self-check (CSP and Trusted Types in the real webview)
+        working-directory: gui
+        shell: bash
+        run: |
+          exe=./gui-app$([ "$RUNNER_OS" = Windows ] && echo .exe)
+          if [ "$RUNNER_OS" = Linux ]; then
+            CLAWBRIDGE_GUI_SELFCHECK=1 timeout 90 xvfb-run -a "$exe"
+          else
+            CLAWBRIDGE_GUI_SELFCHECK=1 timeout 90 "$exe"
+          fi
+  wsl-launch:
+    # The real launch chain on Windows: Go's argv quoting -> wsl.exe -> sh -c
+    # -> the distro user's login shell (PATH only from ~/.profile, rc files
+    # that print) -> a stand-in clawbridge, until gui-backend is on main.
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: gui/go.mod
+          cache-dependency-path: gui/go.sum
+      - name: Build the stand-in client for Linux
+        working-directory: gui
+        shell: bash
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ../clawbridge-fake-linux ./backend/testdata/fakeclawbridge
+      - uses: Vampire/setup-wsl@79d85ead05e70e4ba1e1e83367db6e0ccb89b578 # v4.1.1
+        with:
+          distribution: Ubuntu-24.04
+      - name: Install the stand-in in WSL, with a noisy login profile
+        shell: wsl-bash {0}
+        run: |
+          set -eu
+          mkdir -p ~/.local/bin
+          cp clawbridge-fake-linux ~/.local/bin/clawbridge
+          chmod +x ~/.local/bin/clawbridge
+          # PATH only from the login profile, plus junk on stdout (GUI-DESIGN §6.2).
+          printf 'echo "motd: welcome to the spike"\necho "nvm: using node v22"\nexport PATH="$HOME/.local/bin:$PATH"\n' >> ~/.profile
+          # At the top of .bashrc: Ubuntu's stock file returns early when not interactive.
+          sed -i '1i echo "bashrc junk"' ~/.bashrc
+          echo "login shell: $(getent passwd "$(id -un)" | cut -d: -f7)"
+          # Not on PATH without the profile: a plain wsl.exe -- clawbridge must fail.
+          ! env -i /bin/sh -c 'command -v clawbridge'
+      - name: Launch through the real launcher
+        working-directory: gui
+        shell: pwsh
+        env:
+          CB_WSL_DISTRO: Ubuntu-24.04
+        run: |
+          go test -p 2 -count=1 -v -tags wslintegration -run TestWSLLaunch ./backend/
+          if ($LASTEXITCODE -ne 0) { exit 1 }

@@ -1,0 +1,71 @@
+{
+  "sessions": [
+    {
+      "id": "ses_example01",
+      "name": "atlas/billing-retry",
+      "owner_principal": "mara@example.test",
+      "host": "mara-mbp",
+      "agent_kind": "claude",
+      "status": "active",
+      "presence": "online",
+      "stale": false,
+      "assignment": {
+        "state": "confirmed",
+        "issue_identifier": "ATL-142"
+      },
+      "updated_at": "2026-10-31T10:46:00Z"
+    },
+    {
+      "id": "ses_example02",
+      "name": "atlas/rate-limits",
+      "owner_principal": "mara@example.test",
+      "host": "mara-mbp",
+      "agent_kind": "codex",
+      "status": "active",
+      "presence": "online",
+      "stale": false,
+      "assignment": {
+        "state": "confirmed",
+        "issue_identifier": "ATL-151"
+      },
+      "updated_at": "2026-10-31T10:46:00Z"
+    },
+    {
+      "id": "ses_example03",
+      "name": "atlas/docs-pass",
+      "owner_principal": "kofi@example.test",
+      "host": "kofi-linux",
+      "agent_kind": "claude",
+      "status": "active",
+      "presence": "online",
+      "stale": false,
+      "assignment": {
+        "state": "proposed",
+        "issue_identifier": "ATL-149"
+      },
+      "updated_at": "2026-10-31T10:44:00Z"
+    },
+    {
+      "id": "ses_example04",
+      "name": "atlas/flaky-tests",
+      "owner_principal": "mara@example.test",
+      "host": "ci-runner-2",
+      "agent_kind": "codex",
+      "status": "active",
+      "presence": "idle",
+      "stale": true,
+      "updated_at": "2026-10-31T08:47:00Z"
+    },
+    {
+      "id": "ses_example05",
+      "name": "harbor/landing-copy",
+      "owner_principal": "kofi@example.test",
+      "host": "kofi-linux",
+      "agent_kind": "claude",
+      "status": "retired",
+      "presence": "offline",
+      "stale": true,
+      "updated_at": "2026-10-30T08:47:00Z"
+    }
+  ]
+}

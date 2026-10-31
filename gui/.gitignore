@@ -1,0 +1,7 @@
+# Built output and dependencies are never committed.
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+bin/
+/gui
+/gui.exe

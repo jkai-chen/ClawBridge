@@ -1,0 +1,93 @@
+{
+  "status": "fail",
+  "generated_at": "2026-10-31T10:46:00Z",
+  "checks": [
+    {
+      "id": "codex.mcp.path",
+      "title": "MCP entry for Codex points to an old binary path",
+      "status": "fail",
+      "message": "The Codex MCP entry runs /old/path/clawbridge, which no longer exists.",
+      "path": "~/.codex/config.toml",
+      "action": "clawbridge mcp install --agent codex --session NAME"
+    },
+    {
+      "id": "example.pass.1",
+      "title": "Example check 1",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.2",
+      "title": "Example check 2",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.3",
+      "title": "Example check 3",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "codex.skill.version",
+      "title": "Codex skill is one version behind",
+      "status": "warn",
+      "message": "The Codex skill is one version behind this client.",
+      "action": "clawbridge skill install --agent codex"
+    },
+    {
+      "id": "example.pass.4",
+      "title": "Example check 4",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.5",
+      "title": "Example check 5",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.6",
+      "title": "Example check 6",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "watcher.tick",
+      "title": "Comment watcher between server ticks",
+      "status": "info",
+      "message": "Last good tick 9 min ago."
+    },
+    {
+      "id": "example.pass.7",
+      "title": "Example check 7",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.8",
+      "title": "Example check 8",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.9",
+      "title": "Example check 9",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.10",
+      "title": "Example check 10",
+      "status": "pass",
+      "message": "ok"
+    },
+    {
+      "id": "example.pass.11",
+      "title": "Example check 11",
+      "status": "pass",
+      "message": "ok"
+    }
+  ]
+}

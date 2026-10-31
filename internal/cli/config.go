@@ -46,6 +46,11 @@ type Config struct {
 	// PATH". A field no layer set has no entry. Never written to a config
 	// file, and overlay never copies it.
 	Sources map[string]string `toml:"-"`
+	// NoProfile is set by resolveConfig when this machine has no profile at
+	// all: no config file at the resolved path, and no route from a
+	// repository file, the environment or a flag. Doctor then says so once.
+	// Never written to a config file.
+	NoProfile bool `toml:"-"`
 }
 
 // scopeSourceFields are the scope fields whose source Config.Sources
@@ -258,6 +263,13 @@ func resolveConfigVariant(ctx context.Context, flags Config, variant func(Config
 		env = Config{}
 	}
 	base = overlay(overlay(base, env), flags)
+	// With no file, whatever is set came from the repository, the environment
+	// or a flag: a profile only if any of it is.
+	_, statErr := os.Stat(path)
+	noProfile := errors.Is(statErr, os.ErrNotExist) && !routeSet(base)
+	// Local mode needs no file: a store at the default path is a profile too.
+	// Only stat it here; doctor must not open or create it.
+	defaultDB := base.DB == ""
 	noteSources(sources, env, func(name string) string { return "env " + name })
 	noteSources(sources, flags, func(string) string { return "flag" })
 	base.Sources = sources
@@ -272,6 +284,11 @@ func resolveConfigVariant(ctx context.Context, flags Config, variant func(Config
 		return Config{}, "", err
 	}
 	base.DB = abs
+	if noProfile && defaultDB {
+		if _, e := os.Stat(base.DB); e == nil || !errors.Is(e, os.ErrNotExist) {
+			noProfile = false
+		}
+	}
 	if base.Mode != "" && base.Mode != "local" && base.Mode != "cloud" {
 		return Config{}, "", errors.New("unsupported storage mode; no write queued")
 	}
@@ -305,7 +322,17 @@ func resolveConfigVariant(ctx context.Context, flags Config, variant func(Config
 		return Config{}, "", err
 	}
 	base.ClientConfig = path
+	base.NoProfile = noProfile
 	return base, path, nil
+}
+
+// routeSet reports whether c names any part of a profile: a route, a scope
+// or a Linear profile.
+func routeSet(c Config) bool {
+	return c.LinearProfile != "" || c.DB != "" || c.Workspace != "" || c.Project != "" ||
+		c.Session != "" || c.Instance != "" || c.Mode != "" || c.Server != "" ||
+		c.Principal != "" || c.Cache != "" || c.CredentialSource != "" ||
+		c.DeviceID != "" || c.KeyStore != ""
 }
 
 // writeDefaultProject saves project as the default of the profile file at

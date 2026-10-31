@@ -93,7 +93,11 @@ func TestDoctorStillWarnsWhenAskedOrWhenAnAgentIsSetUp(t *testing.T) {
 	if _, ok := checks["mcp.entries"]; ok {
 		t.Fatal("mcp.entries with an entry selected")
 	}
+	// A folder with nothing in it is no agent set up (doctor_not_set_up_test.go).
 	if err := os.MkdirAll(filepath.Join(dir, "home", ".claude"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "home", ".claude", "settings.json"), []byte("{}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	report, checks, _ := doctorChecks(t)

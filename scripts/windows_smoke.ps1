@@ -51,7 +51,8 @@ try {
     Write-Output ('join: refused (' + $out.Trim() + ')')
 
     # doctor on a machine that was never set up: it reports, it does not crash.
-    # Exit 1 is a failed check (no profile here); anything above is an error.
+    # Exit 1 is the one failed check, setup.none (no profile here); anything
+    # above is an error.
     # Its report goes to the log as the run's evidence.
     $out = (& $Exe doctor 2>&1 | Out-String)
     $code = $LASTEXITCODE

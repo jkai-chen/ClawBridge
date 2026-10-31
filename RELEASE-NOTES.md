@@ -1,3 +1,15 @@
+# Unreleased
+
+## Fixes
+
+- **`doctor` on a machine where ClawBridge was never set up gives one answer.** With no profile file and no route from
+  the environment or a flag, it used to print three failures (the settings, the workspace and the project) and create
+  an empty local database. It now reports one, `setup.none`: "ClawBridge isn't set up on this machine yet: run
+  clawbridge to start (or clawbridge join with an invite)", still exits 1, and creates nothing. Any profile, even a
+  half-written one, keeps the usual checks. An agent folder that exists but is empty (a `~/.claude` an installer made)
+  is now treated like a missing one: `skill.version` and `mcp.entries` are notes, not warnings. The JSON gains the
+  `setup.none` check id and keeps the rest. No schema change. Linear config scope: none.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

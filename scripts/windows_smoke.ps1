@@ -51,10 +51,24 @@ try {
     Write-Output ('join: refused (' + $out.Trim() + ')')
 
     # doctor on a machine that was never set up: it reports, it does not crash.
+    # Exit 1 is a failed check (no profile here); anything above is an error.
+    # Its report goes to the log as the run's evidence.
     $out = (& $Exe doctor 2>&1 | Out-String)
+    $code = $LASTEXITCODE
     Assert-NoPanic $out 'doctor'
     Assert-Smoke ($out.Trim() -ne '') 'doctor printed nothing'
-    Write-Output ('doctor: exit ' + $LASTEXITCODE)
+    Assert-Smoke ($code -eq 0 -or $code -eq 1) ('doctor exited ' + $code + ': ' + $out)
+    Write-Output ('doctor: exit ' + $code)
+    # Off a terminal doctor prints its report as one JSON line: one line per
+    # check here; anything else is shown as it came.
+    $report = $null
+    $json = $out -split "`r?`n" | Where-Object { $_.StartsWith('{') } | Select-Object -First 1
+    if ($null -ne $json) { try { $report = $json | ConvertFrom-Json } catch { $report = $null } }
+    if ($null -ne $report -and $null -ne $report.checks) {
+        foreach ($check in $report.checks) { Write-Output ('  ' + $check.id + ' ' + $check.status + ': ' + $check.message) }
+    } else {
+        $out.TrimEnd() -split "`r?`n" | Select-Object -First 60 | ForEach-Object { Write-Output ('  ' + $_) }
+    }
 } finally {
     $env:CLAWBRIDGE_HOME = $oldHome
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

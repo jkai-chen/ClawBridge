@@ -2836,6 +2836,16 @@ safety net; without webhooks, the poll finds them on its usual cadence
 - **S3:** a person @-mentions the app in a comment.
 - S4 (every new issue) is off.
 
+**Keep one `needs-agent` label per team.** The S1 poll reads each bound team's `needs-agent` label set: the team's
+own label, the workspace's, and a bound parent team's. Use the team's own `needs-agent` or a workspace one, not
+both; a bound parent team's own label counts alongside the team's own. A workspace label next to the team's own
+(or the parent's own) leaves the team with no usable label, and so do two labels of that name in one team. With
+no usable label, S1 reads nothing for that team, and label changes made meanwhile are not picked up later. The
+server rechecks the label at most once an hour, so after you create or fix it, intake can take up to an hour to
+notice; restarting the server's api makes it check at once.
+Set `needs-agent` after the issue exists: a label set in the same step that creates the issue isn't counted today,
+so add the label once the issue exists.
+
 **Who asked matters.**
 - Only Linear users on the project's trusted list can ever let a signal go beyond telling the coordinator. A
   project lead or owner adds them with `clawbridge intake trust add "Ada Lovelace" --confirm` (a name or email,

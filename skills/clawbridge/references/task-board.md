@@ -165,6 +165,9 @@ label list); agents do not create it.
   team's: the two have different IDs. The server's intake reads both. A
   manual `issues --label` with the parent's UUID can't reach a sub-team that
   has its own copy, so use the intake queue (`intake list`) as the full list.
+- Use the team's own `needs-agent` or a workspace one, not both (a bound parent team's own counts alongside the
+  team's own). A workspace label next to a team's own, or two of that name in one team, leaves intake reading
+  nothing for that team. Add the label after the issue exists, not in the step that creates it.
 - Other sessions do not pick work from this list; they wait for the
   coordinator's assignment.
 - The label asks for attention. It is not approval, an assignment or a scope

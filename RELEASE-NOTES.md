@@ -9,6 +9,11 @@
   entering every entry again. docs/operations/deployment.md also now runs the webhook probe with `exec` in the
   running `api` container (`--public-origin http://127.0.0.1:8080`), says the redaction `sed` matches YAML renders
   only, and edits a linked env file through its target. No schema change. Linear config scope: none.
+- **Two settings are reserved for the coming Linear app webhook, and do nothing yet.**
+  `CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET` (one secret, or two comma-separated during a rotation; needs the Linear app)
+  and `CLAWBRIDGE_APP_WEBHOOK_PROVEN` (`serve --app-webhook-proven`) are recognised and checked at start, and a bad
+  secret refuses the start without showing it. No route reads them, so setting them changes nothing. No schema change.
+  Linear config scope: none.
 
 ## Linear
 

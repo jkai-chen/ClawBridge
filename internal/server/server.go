@@ -664,6 +664,9 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(settings.AppWebhookSecrets) > 0 {
+		log.Print("linear app webhook: configured (inert until FR32 ships)")
+	}
 	auth.Devices = store
 	seal, maxAgents, err := readModelSettings(os.Getenv)
 	if err != nil {
@@ -1077,6 +1080,14 @@ type ServeSettings struct {
 	// after the webhook probe. Off, deliveries are verified and recorded
 	// inert.
 	WebhooksProven bool
+	// AppWebhookSecrets are the Linear app webhook's signing secrets (one,
+	// or two during a rotation), from CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET
+	// only (never a flag, never logged). Nothing reads them yet (FR32).
+	AppWebhookSecrets []string
+	// AppWebhookProven is the app webhook's own gate: serve
+	// --app-webhook-proven or CLAWBRIDGE_APP_WEBHOOK_PROVEN=1. Nothing reads
+	// it yet (FR32).
+	AppWebhookProven bool
 	// TrustedProxies are the peers whose X-Forwarded-For and
 	// X-Forwarded-Proto count (S2): serve --trusted-proxies, else
 	// CLAWBRIDGE_TRUSTED_PROXIES. Unset trusts no peer.
@@ -1104,6 +1115,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	planProven := f.Bool("project-plan-proven", false, "let the project owner, a lead, a team's lead or the coordinator set a Linear project's priority, target date and start date; set only after the plan probe proves it (also CLAWBRIDGE_PROJECT_PLAN_PROVEN=1)")
 	webhooksProven := f.Bool("webhooks-proven", false, "let verified Linear webhook deliveries mark watch cursors due; set only after the webhook probe proves them (also CLAWBRIDGE_WEBHOOKS_PROVEN=1)")
 	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
+	appWebhookProven := f.Bool("app-webhook-proven", false, "reserved for the Linear app webhook (FR32); no effect yet (also CLAWBRIDGE_APP_WEBHOOK_PROVEN=1)")
 	trustedProxies := f.String("trusted-proxies", "", "comma-separated IPs, CIDRs or host names of the reverse proxies whose X-Forwarded-For and X-Forwarded-Proto count; unset trusts none (also CLAWBRIDGE_TRUSTED_PROXIES)")
 	statusDomainProven := f.Bool("project-status-domain-proven", false, "let a dispatcher domain's coordinator set a Linear project's status inside its lane; set only after the probe shows the app's project teams list a private team the app isn't a member of (also CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1)")
 	if err := f.Parse(args); err != nil {
@@ -1193,6 +1205,15 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_WEBHOOKS_PROVEN is 1 or 0")
 	}
+	out.AppWebhookProven = *appWebhookProven
+	switch v := getenv("CLAWBRIDGE_APP_WEBHOOK_PROVEN"); v {
+	case "":
+	case "1", "true":
+		out.AppWebhookProven = true
+	case "0", "false":
+	default:
+		return ServeSettings{}, errors.New("CLAWBRIDGE_APP_WEBHOOK_PROVEN is 1 or 0")
+	}
 	proxiesSource, proxiesValue := "--trusted-proxies", *trustedProxies
 	if strings.TrimSpace(proxiesValue) == "" {
 		proxiesSource, proxiesValue = "CLAWBRIDGE_TRUSTED_PROXIES", getenv("CLAWBRIDGE_TRUSTED_PROXIES")
@@ -1205,6 +1226,23 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	}
 	if len(out.WebhookSecrets) > 0 && getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_ID") == "" && getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET") == "" && getenv("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY") == "" {
 		return ServeSettings{}, errors.New("CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS needs the Linear app (CLAWBRIDGE_LINEAR_APP_*); configure it or unset the secrets")
+	}
+	if out.AppWebhookSecrets, err = parseAppWebhookSecret(getenv("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET")); err != nil {
+		return ServeSettings{}, err
+	}
+	if len(out.AppWebhookSecrets) > 0 && getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_ID") == "" && getenv("CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET") == "" && getenv("CLAWBRIDGE_LINEAR_APP_TOKEN_KEY") == "" {
+		return ServeSettings{}, errors.New("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET needs the Linear app (CLAWBRIDGE_LINEAR_APP_*); configure it or unset the secret")
+	}
+	// A secret shared by the app route and a team route would let a delivery
+	// signed for one verify on the other.
+	for i, app := range out.AppWebhookSecrets {
+		for _, team := range out.WebhookSecrets {
+			for _, secret := range team {
+				if app == secret {
+					return ServeSettings{}, fmt.Errorf("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET value %d is also a team's secret in CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS; use a different secret per route", i+1)
+				}
+			}
+		}
 	}
 	if out.Auth.PublicOrigin, err = ParsePublicOrigin(*publicOrigin); err != nil {
 		return ServeSettings{}, err

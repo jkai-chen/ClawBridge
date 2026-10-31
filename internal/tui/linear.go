@@ -11,6 +11,7 @@ import (
 	"clawbridge/internal/linearboard"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearprovider"
+	"clawbridge/internal/uiflow"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -147,6 +148,32 @@ type LinearSnapshot struct {
 
 func (m Model) LinearState() LinearSnapshot {
 	return LinearSnapshot{Step: m.linear.step, ProfileID: m.linear.profile, Binding: m.linear.binding, BindingV2: m.linear.bindingV2, SelectedProjectIDs: append([]string{}, m.linear.selectedProjects...), IssueV2: m.linear.issueV2, SelectedTeamIDs: append([]string(nil), m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectID: m.linear.project, TeamBoard: m.linear.teamBoard, NextCursor: m.linear.next, Issue: m.linear.issue}
+}
+
+// linkDraft is the link choices as the shared flow sees them.
+func (m Model) linkDraft() uiflow.LinkDraft {
+	return uiflow.LinkDraft{Chosen: append([]string(nil), m.linear.chosen...), DefaultTeam: m.linear.defaultTeam,
+		SelectedProjects: append([]string(nil), m.linear.selectedProjects...), Project: m.linear.project,
+		TeamBoard: m.linear.teamBoard, Closes: copyCloses(m.linear.closes), V2: m.linear.bindingV2 != nil}
+}
+
+// setLinkDraft copies a draft the shared flow returned back into the
+// model's own fields.
+func (m *Model) setLinkDraft(d uiflow.LinkDraft) {
+	m.linear.chosen, m.linear.defaultTeam = d.Chosen, d.DefaultTeam
+	m.linear.selectedProjects, m.linear.project = d.SelectedProjects, d.Project
+	m.linear.teamBoard, m.linear.closes = d.TeamBoard, d.Closes
+}
+
+func copyCloses(closes map[string]string) map[string]string {
+	if closes == nil {
+		return nil
+	}
+	out := make(map[string]string, len(closes))
+	for id, who := range closes {
+		out[id] = who
+	}
+	return out
 }
 
 func (m Model) linearConfigured() bool {
@@ -527,20 +554,8 @@ func (m Model) linearLink(confirm bool) (Model, tea.Cmd) {
 	if confirm {
 		operation = "link"
 	}
-	request := LinearRequest{Operation: operation, ProfileID: m.linear.profile, Link: linearboard.LinkInput{TeamIDs: append([]string{}, m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectID: m.linear.project, ExpectedRevision: m.linearRevision(), TeamBoard: m.linear.teamBoard, Confirm: confirm}}
-	if m.linear.bindingV2 != nil {
-		request.LinkV2 = &linearboard.LinkInputV2{TeamIDs: append([]string{}, m.linear.chosen...), DefaultTeamID: m.linear.defaultTeam, ProjectIDs: append([]string{}, m.linear.selectedProjects...), ExpectedRevision: m.linearRevision(), TeamBoard: m.linear.teamBoard, Confirm: confirm}
-		if len(m.linear.closes) > 0 && !m.linear.teamBoard {
-			request.LinkV2.Closes = map[string]string{}
-			for id, who := range m.linear.closes {
-				request.LinkV2.Closes[id] = who
-			}
-			// Only linearClosesTyped confirms with agents in it: the
-			// person typed each such project's name here.
-			request.LinkV2.Via = linearboard.ClosesViaTUI
-			request.LinkV2.MinimalPolicy = confirm && m.linear.minimal != ""
-		}
-	}
+	link, linkV2 := m.linkDraft().Inputs(confirm, m.linearRevision(), m.linear.minimal != "")
+	request := LinearRequest{Operation: operation, ProfileID: m.linear.profile, Link: link, LinkV2: linkV2}
 	return m.linearCommand(request)
 }
 
@@ -553,11 +568,7 @@ func (m Model) linearStep() string {
 }
 
 // linearPrevious is the step Esc goes back to from each step.
-var linearPrevious = map[string]string{
-	"teams": "profiles", "default": "teams", "projects": "default", "preview": "projects",
-	"tasks": "profiles", "details": "tasks", "unlink": "tasks", "intake": "tasks", "status": "tasks", "views": "tasks", "roles": "tasks", "cancel": "tasks",
-	"writes": "profiles",
-}
+var linearPrevious = uiflow.LinearPrevious
 
 // linearBack is Esc on the Linear screen: one step back, keeping what was
 // chosen there and the page it showed (§3.1). It reads again only when
@@ -647,23 +658,12 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		if id == "" {
 			return m, nil
 		}
-		ids := append([]string(nil), m.linear.chosen...)
-		if linearHas(ids, id) {
-			next := []string{}
-			for _, v := range ids {
-				if v != id {
-					next = append(next, v)
-				}
-			}
-			ids = next
-		} else {
-			if len(ids) >= 20 {
-				m.status = noteStatus("Select at most 20 teams.")
-				return m, nil
-			}
-			ids = append(ids, id)
+		draft, err := m.linkDraft().ToggleTeam(id)
+		if err != nil {
+			m.status = noteStatus(err.Error())
+			return m, nil
 		}
-		m.linear.chosen = ids
+		m.setLinkDraft(draft)
 		return m, nil
 	}
 	if key == " " && m.linear.step == "projects" && m.linear.bindingV2 != nil {
@@ -671,31 +671,10 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		if id == "" {
 			return m, nil
 		}
-		if id == "team-board" {
-			m.linear.teamBoard = true
-			m.linear.selectedProjects = nil
-			m.linear.project = ""
-			return m, nil
-		}
-		m.linear.teamBoard = false
-		if linearHas(m.linear.selectedProjects, id) {
-			ids := []string{}
-			for _, value := range m.linear.selectedProjects {
-				if value != id {
-					ids = append(ids, value)
-				}
-			}
-			m.linear.selectedProjects = ids
-		} else {
-			if len(m.linear.selectedProjects) >= 50 {
-				m.status = noteStatus("Select at most 50 projects.")
-				return m, nil
-			}
-			m.linear.selectedProjects = append(append([]string{}, m.linear.selectedProjects...), id)
-		}
-		m.linear.project = ""
-		if len(m.linear.selectedProjects) == 1 {
-			m.linear.project = m.linear.selectedProjects[0]
+		draft, err := m.linkDraft().ToggleProject(id)
+		m.setLinkDraft(draft)
+		if err != nil {
+			m.status = noteStatus(err.Error())
 		}
 		return m, nil
 	}
@@ -742,25 +721,7 @@ func (m Model) linearKey(key string) (Model, tea.Cmd) {
 		if id == "" {
 			return m, nil
 		}
-		if m.linear.bindingV2 != nil {
-			if len(m.linear.selectedProjects) == 0 && !m.linear.teamBoard {
-				if id == "team-board" {
-					m.linear.teamBoard = true
-				} else {
-					m.linear.selectedProjects = []string{id}
-				}
-			}
-			m.linear.project = ""
-			if len(m.linear.selectedProjects) == 1 {
-				m.linear.project = m.linear.selectedProjects[0]
-			}
-		} else {
-			m.linear.teamBoard = id == "team-board"
-			m.linear.project = ""
-			if !m.linear.teamBoard {
-				m.linear.project = id
-			}
-		}
+		m.setLinkDraft(m.linkDraft().PickProject(id))
 		return m.linearLink(false)
 	case "preview":
 		// Agents close a project's issues only once its name is typed.
@@ -818,23 +779,7 @@ func (m Model) linearToggleCloses() (Model, tea.Cmd) {
 		return m, nil
 	}
 	l := m.linear.lines[m.selected]
-	now := l.Set
-	if now == "" {
-		now = linearboard.ClosesHuman
-		if l.Closes == "agents" {
-			now = linearboard.ClosesAgent
-		}
-	}
-	next := linearboard.ClosesAgent
-	if now == linearboard.ClosesAgent {
-		next = linearboard.ClosesHuman
-	}
-	closes := map[string]string{}
-	for id, who := range m.linear.closes {
-		closes[id] = who
-	}
-	closes[l.LinearProject] = next
-	m.linear.closes = closes
+	m.setLinkDraft(m.linkDraft().ToggleCloses(l))
 	return m.linearLink(false)
 }
 
@@ -842,27 +787,7 @@ func (m Model) linearToggleCloses() (Model, tea.Cmd) {
 // that they don't already: each needs its name typed. An answer the shown
 // preview doesn't reflect means the preview is stale, and nothing goes.
 func (m Model) linearClosesToType() ([]linearboard.ClosesLine, error) {
-	lines := map[string]linearboard.ClosesLine{}
-	for _, l := range m.linear.lines {
-		lines[l.LinearProject] = l
-	}
-	var out []linearboard.ClosesLine
-	for _, l := range m.linear.lines {
-		want := m.linear.closes[l.LinearProject]
-		switch {
-		case want == linearboard.ClosesAgent && l.Set == linearboard.ClosesAgent:
-			out = append(out, l)
-		case want == linearboard.ClosesAgent && l.Closes == "agents":
-		case want == linearboard.ClosesAgent || l.Set != "" && l.Set != want:
-			return nil, errors.New("the preview is out of date; press c again or reopen the link review. Nothing was changed")
-		}
-	}
-	for id, who := range m.linear.closes {
-		if _, shown := lines[id]; !shown && who == linearboard.ClosesAgent {
-			return nil, errors.New("the preview is out of date; reopen the link review. Nothing was changed")
-		}
-	}
-	return out, nil
+	return uiflow.ClosesToType(m.linear.lines, m.linear.closes)
 }
 
 // linearClosesTyped checks the name typed for the next project agents
@@ -876,7 +801,7 @@ func (m Model) linearUnlinkTyped() (Model, tea.Cmd) {
 	want := m.linearUnlinkSlug()
 	typed := m.draft
 	m.inputMode, m.draft = inputNone, ""
-	if want == "" || typed != want {
+	if !uiflow.TypedMatches(want, typed) {
 		m.status = noteStatus(fmt.Sprintf("the slug typed is not %q; nothing was unlinked", want))
 		return m, nil
 	}
@@ -899,7 +824,7 @@ func (m Model) linearClosesTyped() (Model, tea.Cmd) {
 		return m, nil
 	}
 	want := m.linear.typing[0].Name
-	if want == "" || m.draft != want {
+	if !uiflow.TypedMatches(want, m.draft) {
 		m.inputMode, m.draft, m.linear.typing = inputNone, "", nil
 		m.status = noteStatus(fmt.Sprintf("the name typed is not %q; nothing was changed", want))
 		return m, nil

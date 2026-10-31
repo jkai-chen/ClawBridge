@@ -174,6 +174,8 @@ func (w *AppWriter) serviceWith(ctx context.Context, identity bus.Identity, leas
 		// Only here, as the app, is a project's kind read from Linear, so
 		// only here may an agent cancel (AGENT-CANCEL R4).
 		ProjectKindLabels: linearboard.GraphQLProjectKindLabels(w.App.GraphQL),
+		// App writes take the client's expected_updated_at (FR29).
+		UpdatedAtGuard: true,
 	}), id, nil
 }
 
@@ -585,6 +587,9 @@ func (w *AppWriter) status(parent context.Context, identity bus.Identity, r bus.
 		return bus.Result{}, err
 	}
 	out := map[string]any{"configured": true, "app_user_id": id.AppUserID, "linear_org_id": id.LinearOrgID, "attribution_record_failures": w.attributionFailures.Load()}
+	// A client that sees this sends expected_updated_at with a
+	// description guard (FR29).
+	out["description_guard_updated_at"] = true
 	if w.Store != nil && w.Store.OutboxAvailable() {
 		// A client that sees this may send accept_queued (§4.1).
 		out["queues_writes"] = true

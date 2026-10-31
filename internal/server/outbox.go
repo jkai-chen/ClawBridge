@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"maps"
 	"regexp"
 	"time"
 
@@ -112,6 +113,13 @@ func orderKey(operation string, args map[string]any) (key, issue string) {
 // writeDigest is a write's operation and arguments, to refuse an
 // operation_id reused for a different write.
 func writeDigest(operation string, args map[string]any) string {
+	// expected_updated_at is a precondition read just before sending, not
+	// the write: a retry of the same operation_id after an unrelated edit
+	// is the same write (FR29).
+	if _, ok := args["expected_updated_at"]; ok {
+		args = maps.Clone(args)
+		delete(args, "expected_updated_at")
+	}
 	raw, _ := json.Marshal([]any{operation, args})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

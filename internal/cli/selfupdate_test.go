@@ -27,15 +27,21 @@ type suFake struct {
 	applies    int
 	skillPaths []string
 	serverAsks int
+
+	rollbackResult selfupdate.RollbackResult
+	rollbackErr    error
+	rollbackOpts   []selfupdate.Options
 }
 
 func fakeSelfUpdate(t *testing.T, current string, f *suFake) {
 	t.Helper()
-	oldPlan, oldApply, oldSkill, oldServer, oldVersion := selfUpdatePlan, selfUpdateApply, selfUpdateSkill, selfUpdateServerVersion, buildinfo.Version
+	oldPlan, oldApply, oldRollback, oldSkill, oldServer, oldVersion := selfUpdatePlan, selfUpdateApply, selfUpdateRollback, selfUpdateSkill, selfUpdateServerVersion, buildinfo.Version
 	t.Cleanup(func() {
-		selfUpdatePlan, selfUpdateApply, selfUpdateSkill, selfUpdateServerVersion, buildinfo.Version = oldPlan, oldApply, oldSkill, oldServer, oldVersion
+		selfUpdatePlan, selfUpdateApply, selfUpdateRollback, selfUpdateSkill, selfUpdateServerVersion, buildinfo.Version = oldPlan, oldApply, oldRollback, oldSkill, oldServer, oldVersion
 	})
 	t.Setenv("CLAWBRIDGE_VERIFY", "")
+	// The rollback slot and auto-update.json, never the person's.
+	t.Setenv("CLAWBRIDGE_HOME", t.TempDir())
 	buildinfo.Version = current
 	selfUpdatePlan = func(_ context.Context, o selfupdate.Options) (selfupdate.Plan, error) {
 		f.planOpts = append(f.planOpts, o)
@@ -45,6 +51,10 @@ func fakeSelfUpdate(t *testing.T, current string, f *suFake) {
 		f.applies++
 		f.applyOpts = append(f.applyOpts, o)
 		return f.result, f.applyErr
+	}
+	selfUpdateRollback = func(_ context.Context, o selfupdate.Options) (selfupdate.RollbackResult, error) {
+		f.rollbackOpts = append(f.rollbackOpts, o)
+		return f.rollbackResult, f.rollbackErr
 	}
 	selfUpdateSkill = func(_ context.Context, binary string, _ io.Writer) error {
 		f.skillPaths = append(f.skillPaths, binary)

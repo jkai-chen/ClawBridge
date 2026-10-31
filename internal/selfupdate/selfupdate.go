@@ -54,6 +54,9 @@ type Options struct {
 	// TempDir is where Windows sets the old binary aside when it is on the
 	// same volume (default os.TempDir()).
 	TempDir string
+	// PreviousDir is the rollback slot (FR24 §5): the binary an update
+	// replaces is kept there for Rollback. "" keeps nothing.
+	PreviousDir string
 	// Run runs a program and returns its stdout: the staged binary's
 	// version, and gh (default os/exec, with a timeout).
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -80,6 +83,9 @@ type Plan struct {
 	Downgrade   bool   `json:"downgrade,omitempty"`
 	Asset       string `json:"asset,omitempty"`
 	Destination string `json:"destination,omitempty"`
+	// Rollback is the version `self-update --rollback` would restore; ""
+	// when none is kept. The command fills it in, not PlanUpdate.
+	Rollback string `json:"rollback,omitempty"`
 }
 
 // Result is what Apply did.
@@ -98,6 +104,12 @@ type Result struct {
 	Aside string `json:"aside,omitempty"`
 	// Swept counts the old binaries of earlier updates removed.
 	Swept int `json:"swept,omitempty"`
+	// Previous is the replaced version, kept for `self-update --rollback`;
+	// "" when nothing was kept.
+	Previous string `json:"previous,omitempty"`
+	// PreviousWarning says why the replaced binary wasn't kept, so no
+	// rollback is available; the update stands.
+	PreviousWarning string `json:"previous_warning,omitempty"`
 }
 
 // ErrNotImplemented marks the API before T1 fills it in.

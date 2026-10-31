@@ -95,6 +95,102 @@ func TestDispatcherClientFactsNeverGrant(t *testing.T) {
 	}
 }
 
+// No client reports an issue's project today, so a claim arrives with none:
+// the server reads it, and the app's project decides.
+func TestDispatcherReadsTheProjectTheClientDidNotReport(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+	e.propose("eng", issueA, "")
+	tick := e.tick()
+	if tick.Error != "" || tick.Dispatch == nil || tick.Dispatch.Actions["confirm"] != 1 || tick.Dispatch.Reads != 1 || e.assignmentState("eng") != "confirmed" {
+		t.Fatal(tick.Dispatch, tick.Error, e.assignmentState("eng"))
+	}
+	var reason, source, domain string
+	e.queryRow(`SELECT reason_code,facts_source,domain FROM dispatcher_decisions WHERE action='confirm'`, &reason, &source, &domain)
+	if reason != "trusted" || source != "app" || domain != "payments" {
+		t.Fatal(reason, source, domain)
+	}
+}
+
+// The same claim with the read failing waits, as a claim whose client did
+// report a project does.
+func TestDispatcherEmptyProjectWaitsWhenTheReadFails(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	e.propose("eng", issueA, "")
+	tick := e.tick()
+	if tick.Error != "" || tick.Dispatch == nil || tick.Dispatch.Actions["wait"] != 1 || e.assignmentState("eng") != "proposed" {
+		t.Fatal(tick.Dispatch, tick.Error, e.assignmentState("eng"))
+	}
+	var reason, source string
+	e.queryRow(`SELECT reason_code,facts_source FROM dispatcher_decisions WHERE action='wait'`, &reason, &source)
+	if reason != "facts_unavailable" || source != "client" {
+		t.Fatal(reason, source)
+	}
+}
+
+// A claim that names paths and no issue has nothing to read: it escalates
+// as no_domain at once, without a read.
+func TestDispatcherPathsOnlyClaimSpendsNoRead(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	e.call("assignment_propose", "eng", map[string]any{"scope_repo": "example.test/repo", "scope_paths": []any{"src/**"}})
+	tick := e.tick()
+	if tick.Error != "" || tick.Dispatch == nil || tick.Dispatch.Reads != 0 || tick.Dispatch.Actions["escalate"] != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	var reason string
+	e.queryRow(`SELECT reason_code FROM dispatcher_decisions WHERE action='escalate'`, &reason)
+	if reason != "no_domain" {
+		t.Fatal(reason)
+	}
+}
+
+// The app says the issue is in no project: one read, no_domain from the
+// app's facts, and the decided claim is not read again.
+func TestDispatcherEmptyProjectIssueWithNoProjectIsReadOnce(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn("eng")
+	issue := appIssue(issueA, "", "unstarted")
+	issue["project"] = nil
+	e.f.dispatchIssues = map[string]any{issueA: issue}
+	e.propose("eng", issueA, "")
+	tick := e.tick()
+	if tick.Error != "" || tick.Dispatch == nil || tick.Dispatch.Reads != 1 || tick.Dispatch.Actions["escalate"] != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	var reason, source string
+	e.queryRow(`SELECT reason_code,facts_source FROM dispatcher_decisions WHERE kind='rules' AND action='escalate'`, &reason, &source)
+	if reason != "no_domain" || source != "app" {
+		t.Fatal(reason, source)
+	}
+	if again := e.tick(); again.Dispatch != nil && again.Dispatch.Reads != 0 {
+		t.Fatal("read again", again.Dispatch)
+	}
+	if n := e.count(`SELECT COUNT(*) FROM dispatcher_decisions WHERE kind='rules'`); n != 1 {
+		t.Fatal("decisions:", n)
+	}
+}
+
+// An untrusted session's claim with no reported project is read, then
+// escalated as untrusted for the domain the app's project names.
+func TestDispatcherEmptyProjectUntrustedEscalatesWithTheDomain(t *testing.T) {
+	e := setup(t)
+	e.dispatcherOn()
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+	e.propose("eng", issueA, "")
+	tick := e.tick()
+	if tick.Dispatch == nil || tick.Dispatch.Actions["escalate"] != 1 || tick.Dispatch.Reads != 1 || e.assignmentState("eng") != "proposed" {
+		t.Fatal(tick.Dispatch, tick.Error, e.assignmentState("eng"))
+	}
+	var reason, domain string
+	e.queryRow(`SELECT reason_code,domain FROM dispatcher_decisions WHERE action='escalate'`, &reason, &domain)
+	if reason != "untrusted" || domain != "payments" {
+		t.Fatal(reason, domain)
+	}
+}
+
 // An untrusted session's claim is escalated to the domain's coordinator,
 // once, with no issue text, and never confirmed however long it waits.
 func TestDispatcherEscalatesAndSilenceNeverGrants(t *testing.T) {

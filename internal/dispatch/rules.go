@@ -43,12 +43,32 @@ func LabelDomains(issue Issue, domains []bus.DispatcherDomain) []bus.DispatcherD
 	return out
 }
 
-// NeedsRead reports whether a case could be confirmed, so the authoritative
-// read is worth its Linear call: the client's facts point at exactly one
-// project domain that trusts the session, which is active.
+// NeedsRead reports whether the authoritative read is worth its Linear call.
+// It is when the claim could be confirmed: the client's facts point at
+// exactly one project domain that trusts the session, which is active. It is
+// also when the client reported no project at all (no client does today) and
+// some domain matches by project, since the app's read is the authority and
+// may find one; whether the session is trusted is then decided on its facts.
+// Label domains never grant, so with none matching by project a read buys
+// nothing. A claim with no issue has nothing to read either.
 func NeedsRead(c Case) bool {
+	if c.Session.Status != sessionActive || c.Session.Presence == presenceStale {
+		return false
+	}
+	if c.Issue.ProjectID == "" {
+		// A paths-only claim names no issue to read.
+		if c.Issue.ID == "" {
+			return false
+		}
+		for _, d := range c.Domains {
+			if len(d.Match.LinearProjects) > 0 {
+				return true
+			}
+		}
+		return false
+	}
 	ds := ProjectDomains(c.Issue, c.Domains)
-	return len(ds) == 1 && trusted(c.Session, ds[0]) && c.Session.Status == sessionActive && c.Session.Presence != presenceStale
+	return len(ds) == 1 && trusted(c.Session, ds[0])
 }
 
 // Rules is the rules engine (live/DISPATCHER-DESIGN.md r4 §5): one proposal

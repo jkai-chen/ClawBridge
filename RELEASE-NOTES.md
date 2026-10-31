@@ -181,6 +181,9 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   as the creator's: Linear records no history entry for it, so once the 10-minute window has passed with no other
   actor's entry, a trusted creator's issue is queued as trusted (an untrusted creator's as untrusted). Linear config
   scope: none.
+- **The dispatcher reads a claimed issue's Linear project itself.** It now reads the issue's project
+  when the client didn't report one. Before, every claim from today's CLI and MCP escalated as `no_domain`. Linear
+  config scope: none.
 
 ## Operations
 

@@ -18,6 +18,7 @@ import (
 	"clawbridge/internal/install"
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/skill"
+	"clawbridge/internal/uiflow/onboarding"
 )
 
 // Each onboarding step runs the same code as its explicit command.
@@ -90,247 +91,116 @@ func runWizardDispatcher(ctx context.Context, path string, args []string) (map[s
 
 var wizardAgentNames = map[string]string{"claude-code": "Claude Code", "codex": "Codex"}
 
-type onboardingStep struct{ name, outcome, later string }
+const wizardCloseMsg = "guided terminal input cleanup failed; restore the terminal before retrying"
+
+// terminalPrompter answers onboarding's questions from the wizard prompt.
+type terminalPrompter struct {
+	ctx    context.Context
+	stdout io.Writer
+	prompt *wizardPrompt
+	ended  bool
+}
+
+// Ask answers "" after input ends, so every remaining question is "no".
+func (t *terminalPrompter) Ask(question, fallback string) (string, error) {
+	if t.ended {
+		return "", nil
+	}
+	a, e := t.prompt.ask(question)
+	if e != nil && t.ctx.Err() == nil {
+		t.ended = true
+		return "", nil
+	}
+	if a == "" {
+		a = fallback
+	}
+	return a, e
+}
+
+func (t *terminalPrompter) Yes(question string) (bool, error) {
+	a, e := t.Ask(question+" [y/N]: ", "")
+	a = strings.ToLower(a)
+	return a == "y" || a == "yes", e
+}
+
+func (t *terminalPrompter) Ended() bool { return t.ended }
+
+func (t *terminalPrompter) Suspend() error { return t.prompt.close() }
+
+func (t *terminalPrompter) Resume() error {
+	p, err := newWizardPrompt(t.ctx, t.stdout, wizardCloseMsg)
+	if err != nil {
+		return err
+	}
+	t.prompt = p
+	return nil
+}
+
+// terminalOutput prints onboarding's lines to stdout.
+type terminalOutput struct{ stdout io.Writer }
+
+func (o terminalOutput) Line(s string) { fmt.Fprintln(o.stdout, s) }
+
+func (o terminalOutput) Heading(n int, name string) {
+	fmt.Fprintf(o.stdout, "\nOptional setup %d of 5 · %s\n", n, name)
+}
+
+func (o terminalOutput) Record(name, outcome, later string) {
+	fmt.Fprintf(o.stdout, "%s: %s\n", name, outcome)
+}
+
+func (o terminalOutput) MCPPreview(p install.Result) error {
+	return clirender.Write(o.stdout, clirender.Human, "onboarding_mcp_entry", p)
+}
 
 // runOnboarding offers the optional setup after a verified join. Each step is
 // skippable, writes nothing without a yes, and a failed step is reported
 // without undoing earlier ones. Only cancellation stops it with an error.
+// The steps live in uiflow/onboarding; this is their terminal adapter.
 func runOnboarding(ctx context.Context, path string, stdout, stderr io.Writer) (retErr error) {
-	prompt, err := newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; restore the terminal before retrying")
+	prompt, err := newWizardPrompt(ctx, stdout, wizardCloseMsg)
 	if err != nil {
 		return err
 	}
+	p := &terminalPrompter{ctx: ctx, stdout: stdout, prompt: prompt}
 	defer func() {
-		if e := prompt.close(); e != nil && !errors.Is(retErr, e) {
+		if e := p.prompt.close(); e != nil && !errors.Is(retErr, e) {
 			retErr = errors.Join(retErr, e)
 		}
 	}()
-	steps := []onboardingStep{}
-	record := func(name, outcome, later string) {
-		steps = append(steps, onboardingStep{name, outcome, later})
-		fmt.Fprintf(stdout, "%s: %s\n", name, outcome)
+	// The package vars are read at call time, so tests can replace them.
+	fx := onboarding.Effects{
+		SkillTargets: func() ([]skill.Target, error) { return wizardSkillTargets() },
+		SkillInstall: func(t []skill.Target) ([]skill.Result, error) { return wizardSkillInstall(t) },
+		LinearStore: func(ctx context.Context, ask func(string, string) (string, error)) (string, error) {
+			return wizardLinearStore(ctx, ask, stdout)
+		},
+		LinearConnect: func(ctx context.Context, name, access, store string) (string, error) {
+			return wizardLinearConnect(ctx, path, name, access, store, stderr)
+		},
+		MCPInstall: func(ctx context.Context, agent, session, profile string, dryRun bool) (install.Result, error) {
+			return wizardMCPInstall(ctx, path, agent, session, profile, dryRun, stderr)
+		},
+		Doctor: func(ctx context.Context, profile string, args []string) (doctor.Report, error) {
+			return wizardDoctor(ctx, path, profile, args)
+		},
+		Dispatcher: func(ctx context.Context, yes func(string) (bool, error), record func(name, outcome, later string), failed func(error) string) error {
+			return offerDispatcher(ctx, path, stdout, yes, record, failed)
+		},
+		AgentNames: wizardAgentNames,
 	}
-	// After input ends, every remaining question is answered "no".
-	ended := false
-	ask := func(question, fallback string) (string, error) {
-		if ended {
-			return "", nil
-		}
-		a, e := prompt.ask(question)
-		if e != nil && ctx.Err() == nil {
-			ended = true
-			return "", nil
-		}
-		if a == "" {
-			a = fallback
-		}
-		return a, e
-	}
-	yes := func(question string) (bool, error) {
-		a, e := ask(question+" [y/N]: ", "")
-		a = strings.ToLower(a)
-		return a == "y" || a == "yes", e
-	}
-	failed := func(e error) string { return "failed: " + clirender.Safe(e.Error()) }
-	// U52: where the person is in the optional steps.
-	heading := func(n int, name string) { fmt.Fprintf(stdout, "\nOptional setup %d of 5 · %s\n", n, name) }
-
-	fmt.Fprintln(stdout, "\nOptional setup. Each step can be skipped and run later; nothing is written without a yes.")
-	agents := []string{}
-	targets, targetErr := wizardSkillTargets()
-	for _, t := range targets {
-		agents = append(agents, t.Agent)
-	}
-
-	// 1. Agent skill.
-	heading(1, "Agent skill")
-	const skillLater = "clawbridge skill install [--agent claude-code|codex|all]"
-	if targetErr != nil {
-		record("Agent skill", "skipped: no Claude Code or Codex configuration found", skillLater)
-	} else {
-		for _, t := range targets {
-			fmt.Fprintf(stdout, "  %s: %s\n", wizardAgentNames[t.Agent], clirender.Safe(t.Dir))
-		}
-		ok, e := yes("Install or update the ClawBridge agent skill there?")
-		switch {
-		case e != nil:
-			return e
-		case !ok:
-			record("Agent skill", "skipped", skillLater)
-		default:
-			results, e := wizardSkillInstall(targets)
-			refused := []string{}
-			for _, r := range results {
-				if r.Refused != "" {
-					refused = append(refused, wizardAgentNames[r.Agent]+": "+r.Refused)
-				}
-			}
-			switch {
-			case e != nil:
-				record("Agent skill", failed(e), skillLater)
-			case len(refused) > 0:
-				record("Agent skill", "refused: "+clirender.Safe(strings.Join(refused, "; ")), "clawbridge skill status, then clawbridge skill install --force")
-			default:
-				record("Agent skill", "installed", "")
-			}
-		}
-	}
-
-	// 2. The user's own Linear account, so MCP entries can pin its profile.
-	profile := ""
-	heading(2, "Linear")
-	const linearLater = "clawbridge linear connect --name NAME --access read, then clawbridge doctor --linear-profile PROFILE_ID"
-	ok, err := yes("Connect your own Linear account (optional)?")
+	steps, err := onboarding.Run(ctx, p, terminalOutput{stdout}, fx)
 	if err != nil {
-		return err
-	}
-	if !ok {
-		record("Linear", "skipped", linearLater)
-	} else {
-		name, e := ask("Connection name [Linear]: ", "Linear")
-		if e != nil {
-			return e
-		}
-		access, e := ask("Access read/write [read] (write lets agents create and update issues): ", "read")
-		if e != nil {
-			return e
-		}
-		access = strings.ToLower(access)
-		if ended {
-			record("Linear", "skipped", linearLater)
-		} else if access != "read" && access != "write" {
-			record("Linear", "skipped: choose read or write", linearLater)
-		} else if store, e := wizardLinearStore(ctx, ask, stdout); e != nil {
-			return e
-		} else if store == "" {
-			record("Linear", "skipped: no system key store", "unlock or start a key store, or clawbridge linear connect --name NAME --access read --key-store file, then clawbridge doctor --linear-profile PROFILE_ID")
-		} else {
-			// No wizard reader may share stdin with the browser sign-in.
-			if e = prompt.close(); e != nil {
-				return e
-			}
-			fmt.Fprintln(stdout, "Opening Linear sign-in in your browser…")
-			profile, e = wizardLinearConnect(ctx, path, name, access, store, stderr)
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if prompt, err = newWizardPrompt(ctx, stdout, "guided terminal input cleanup failed; restore the terminal before retrying"); err != nil {
-				return err
-			}
-			if e != nil {
-				profile = ""
-				record("Linear", failed(e), linearLater)
-			} else {
-				outcome := "connected (" + access + " access, profile " + clirender.Safe(profile) + ")"
-				if report, e := wizardDoctor(ctx, path, profile, nil); e != nil {
-					outcome += "; doctor " + failed(e)
-				} else {
-					outcome += "; " + capabilitySummary(report)
-				}
-				record("Linear", outcome, "")
-			}
-		}
-	}
-
-	// 3. MCP entry per detected agent, previewed before it is written.
-	type entry struct{ agent, path, session string }
-	installed := []entry{}
-	heading(3, "MCP")
-	if len(agents) == 0 {
-		record("MCP", "skipped: no Claude Code or Codex configuration found", "clawbridge mcp install --agent codex|claude-code --session NAME --dry-run")
-	}
-	for _, agent := range agents {
-		label := "MCP for " + wizardAgentNames[agent]
-		later := "clawbridge mcp install --agent " + agent + " --session NAME"
-		if profile != "" {
-			later += " --linear-profile " + profile
-		}
-		later += " --dry-run"
-		ok, e := yes("Connect " + wizardAgentNames[agent] + " to ClawBridge MCP?")
-		if e != nil {
-			return e
-		}
-		if !ok {
-			record(label, "skipped", later)
-			continue
-		}
-		session, e := ask("Session name for "+wizardAgentNames[agent]+" ["+agent+"]: ", agent)
-		if e != nil {
-			return e
-		}
-		if ended {
-			record(label, "skipped", later)
-			continue
-		}
-		preview, e := wizardMCPInstall(ctx, path, agent, session, profile, true, stderr)
-		if e != nil {
-			record(label, failed(e), later)
-			continue
-		}
-		if err := clirender.Write(stdout, clirender.Human, "onboarding_mcp_entry", preview); err != nil {
-			return err
-		}
-		if !preview.Changed {
-			record(label, "already configured", "")
-			installed = append(installed, entry{agent, preview.Path, session})
-			continue
-		}
-		ok, e = yes("Write this entry?")
-		if e != nil {
-			return e
-		}
-		if !ok {
-			record(label, "skipped", later)
-			continue
-		}
-		result, e := wizardMCPInstall(ctx, path, agent, session, profile, false, stderr)
-		if e != nil {
-			record(label, failed(e), later)
-			continue
-		}
-		outcome := "configured in " + clirender.Safe(result.Path)
-		if result.Backup != "" {
-			outcome += " (previous file kept at " + clirender.Safe(result.Backup) + ")"
-		}
-		record(label, outcome, "")
-		installed = append(installed, entry{agent, result.Path, session})
-	}
-
-	// 4. Doctor, once per MCP entry configured here (doctor checks one entry
-	// per run), or once without one, then the summary.
-	type doctorRun struct {
-		name string
-		args []string
-	}
-	heading(4, "Doctor")
-	runs := []doctorRun{{"Doctor", nil}}
-	if len(installed) > 0 {
-		runs = nil
-	}
-	for _, m := range installed {
-		runs = append(runs, doctorRun{"Doctor (" + wizardAgentNames[m.agent] + ")", []string{"--mcp-agent", m.agent, "--mcp-config", m.path, "--mcp-session", m.session}})
-	}
-	for _, run := range runs {
-		if report, e := wizardDoctor(ctx, path, profile, run.args); e != nil {
-			record(run.name, failed(e), "clawbridge doctor")
-		} else {
-			record(run.name, doctorSummary(report), "clawbridge doctor")
-		}
-	}
-	heading(5, "Dispatcher")
-	// 5. The dispatcher, offered to a hosted project's owner (G5,
-	// ONBOARDING-DESIGN step 10): off unless they say yes, rules engine.
-	if err := offerDispatcher(ctx, path, stdout, yes, record, failed); err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "\nSummary:")
 	for _, s := range steps {
-		fmt.Fprintf(stdout, "- %s: %s\n", s.name, s.outcome)
-		if s.later != "" && !strings.HasPrefix(s.name, "Doctor") {
-			fmt.Fprintf(stdout, "  later: %s\n", s.later)
+		fmt.Fprintf(stdout, "- %s: %s\n", s.Name, s.Outcome)
+		if s.Later != "" && !strings.HasPrefix(s.Name, "Doctor") {
+			fmt.Fprintf(stdout, "  later: %s\n", s.Later)
 		}
 	}
-	if ended {
+	if p.ended {
 		fmt.Fprintln(stdout, "Input ended; the remaining steps were skipped.")
 	}
 	return nil
@@ -447,29 +317,7 @@ func offerDispatcher(ctx context.Context, path string, stdout io.Writer, yes fun
 	return nil
 }
 
-func capabilitySummary(r doctor.Report) string {
-	for _, c := range r.Checks {
-		if c.ID == "linear.capabilities" {
-			return "capabilities " + c.Status
-		}
-	}
-	return "capabilities not reported"
-}
-
-// doctorSummary names the overall status and every check that warned or
-// failed; a note (info) is no issue.
-func doctorSummary(r doctor.Report) string {
-	issues := []string{}
-	for _, c := range r.Checks {
-		if c.Status != doctor.Pass && c.Status != doctor.Info {
-			issues = append(issues, c.Status+" "+c.Title)
-		}
-	}
-	if len(issues) == 0 {
-		return r.Status
-	}
-	return clirender.Safe(r.Status + " (" + strings.Join(issues, "; ") + ")")
-}
+func doctorSummary(r doctor.Report) string { return onboarding.DoctorSummary(r) }
 
 // wizardLinearStore is where the Linear connection is kept: the system key
 // store, or, where there is none, a file once the person says yes, as the

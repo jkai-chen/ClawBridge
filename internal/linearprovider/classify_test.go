@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,15 @@ import (
 // classifyServer serves a real go-sdk MCP server whose tools/call POSTs can
 // be answered by refuse instead, and whose tool reports rejected.
 func classifyServer(t *testing.T, refuse func(http.ResponseWriter) bool, rejected string) (*Provider, *httptest.Server) {
+	t.Helper()
+	return classifyServerReuse(t, refuse, rejected, true)
+}
+
+// classifyServerReuse is classifyServer; reuse false makes the client dial
+// a new connection for every request, so a request to a killed server is
+// refused at the dial, before anything is written, rather than racing the
+// client's notice that a pooled connection died.
+func classifyServerReuse(t *testing.T, refuse func(http.ResponseWriter) bool, rejected string, reuse bool) (*Provider, *httptest.Server) {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "synthetic", Version: "1"}, nil)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_team", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []any{"query"}}}, func(context.Context, *mcp.CallToolRequest, map[string]any) (*mcp.CallToolResult, any, error) {
@@ -35,7 +45,13 @@ func classifyServer(t *testing.T, refuse func(http.ResponseWriter) bool, rejecte
 	}))
 	t.Cleanup(h.Close)
 	u, _ := url.Parse(h.URL)
-	p, e := New(context.Background(), &http.Client{Transport: toLocal{u, h.Client().Transport}}, false)
+	transport := h.Client().Transport
+	if !reuse {
+		fresh := transport.(*http.Transport).Clone()
+		fresh.DisableKeepAlives = true
+		transport = fresh
+	}
+	p, e := New(context.Background(), &http.Client{Transport: toLocal{u, transport}}, false)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -82,10 +98,16 @@ func TestProviderFailuresCarryOnlySafeDetailAndProveUnsentRequests(t *testing.T)
 		"rejected, text":    {rejected: "Rate limited: secret title", want: Error{Kind: "provider_rejected"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p, h := classifyServer(t, c.refuse, c.rejected)
+			p, h := classifyServerReuse(t, c.refuse, c.rejected, !c.kill)
 			if c.kill {
 				h.CloseClientConnections()
 				h.Close()
+				// The kill has taken effect: the listener refuses, so the
+				// request below fails at its dial, before a byte is written.
+				if conn, err := net.Dial("tcp", h.Listener.Addr().String()); err == nil {
+					conn.Close()
+					t.Fatal("the killed server still accepts connections")
+				}
 			}
 			before := p.Sent()
 			_, err := p.GetTeam(context.Background(), tid)

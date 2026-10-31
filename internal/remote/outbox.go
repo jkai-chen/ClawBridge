@@ -185,6 +185,10 @@ func classify(ctx context.Context, result bus.Result, unavailable bool, err erro
 		return outbox.Answer{Kind: outbox.NoCredential, Class: "unauthenticated"}
 	case errors.As(err, &httpErr) && httpErr.Code == "maintenance":
 		return outbox.Answer{Kind: outbox.Maintenance, Class: "maintenance", RetryAfter: httpErr.RetryAfter}
+	case errors.As(err, &httpErr) && httpErr.Code == "linear_unavailable":
+		// Linear is down and the server proved nothing was sent: wait and
+		// replay the identical write, as for an outage.
+		return outbox.Answer{Kind: outbox.Transient, Class: "linear_unavailable", RetryAfter: httpErr.RetryAfter}
 	case unavailable || (ctx.Err() != nil && !errors.As(err, &httpErr)):
 		// Unreachable, a 502/503/504, or the request outlived its
 		// deadline: the outcome may be uncertain, and the identical

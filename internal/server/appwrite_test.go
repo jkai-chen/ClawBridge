@@ -1,7 +1,9 @@
 package server
 
 import (
+	"clawbridge/internal/linearprovider"
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"testing"
@@ -86,6 +88,81 @@ func TestLinearWriteErrorsKeepTheBoardMessage(t *testing.T) {
 	}
 	if m := responseMessage("invalid", writeError(errorString("line\\nbreak\n"))); m != "the Linear write was refused" {
 		t.Fatal("unsafe text shown", m)
+	}
+}
+
+// Linear down or limiting is not a bad request: the board proved nothing
+// was sent, so the caller is told so and may retry the same operation ID;
+// an uncertain write stays a conflict whatever its cause.
+func TestLinearUnavailableIsRetryableNotInvalid(t *testing.T) {
+	down := writeError(&linearprovider.Error{Kind: "unavailable", NotSent: true})
+	code, status := serviceError(down)
+	if code != "linear_unavailable" || status != 503 || responseMessage(code, down) != "Linear is unavailable; nothing was sent; safe to retry with the same operation ID" {
+		t.Fatal(code, status, responseMessage(code, down))
+	}
+	if m := responseMessage("linear_unavailable", writeError(&linearprovider.Error{Kind: "unavailable", RetryAfter: "30", NotSent: true})); !strings.HasSuffix(m, "operation ID after 30") {
+		t.Fatal(m)
+	}
+	limited := writeError(&linearprovider.Error{Kind: "rate_limited", Status: 429, RetryAfter: "12", NotSent: true})
+	if code, status := serviceError(limited); code != "rate_limited" || status != 429 || !strings.Contains(responseMessage(code, limited), "nothing was sent; retry with the same operation ID after 12") {
+		t.Fatal(code, status, responseMessage(code, limited))
+	}
+	if code, _ := serviceError(writeError(linearboard.UncertainError{Message: "Linear operation may have been dispatched; outcome uncertain (unavailable), inspect Linear before retrying"})); code != "conflict" {
+		t.Fatal("an uncertain write became retryable:", code)
+	}
+	if code, _ := serviceError(writeError(&linearprovider.Error{Kind: "scope_mismatch"})); code != "invalid" {
+		t.Fatal(code)
+	}
+	// R1: only a proven-unsent failure says "nothing was sent". A failed
+	// tool call (Kind unavailable, NotSent false, no never-dispatched
+	// wrapper) may have reached Linear: it keeps the old answer, never
+	// linear_unavailable, so the outbox never replays it.
+	callTool := &linearprovider.Error{Kind: "unavailable"}
+	if code, _ := serviceError(writeError(callTool)); code == "linear_unavailable" || strings.Contains(responseMessage(code, writeError(callTool)), "nothing was sent") {
+		t.Fatal("a possibly-sent failure was called unsent:", code)
+	}
+	if code, _ := serviceError(writeError(&linearprovider.Error{Kind: "rate_limited", Status: 429})); code == "rate_limited" {
+		t.Fatal("a rate limit without proof was called unsent")
+	}
+	// The same error inside the board's never-dispatched wrapper is proven.
+	wrapped := linearboard.NeverDispatched(callTool)
+	if !linearboard.NotDispatched(wrapped) {
+		t.Fatal("the wrapper is not recognised")
+	}
+	if code, status := serviceError(writeError(wrapped)); code != "linear_unavailable" || status != 503 {
+		t.Fatal(code, status)
+	}
+}
+
+// A failed app write logs one line per kind and operation a minute: the
+// kind, the operation, Linear's status and whether it was sent, and
+// nothing a request carried.
+func TestProviderFailuresAreLoggedRateLimited(t *testing.T) {
+	var logged strings.Builder
+	old := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(old) })
+	now := time.Date(2026, 10, 31, 0, 25, 0, 0, time.UTC)
+	w := &AppWriter{Now: func() time.Time { return now }}
+	down := &linearprovider.Error{Kind: "unavailable", Status: 503, NotSent: true}
+	w.logProviderFailure("comment", down)
+	w.logProviderFailure("comment", down)
+	w.logProviderFailure("create", down)
+	w.logProviderFailure("comment", errorString("token cbl_secret and the issue's text"))
+	w.logProviderFailure("comment", linearboard.UncertainError{Message: "outcome uncertain"})
+	now = now.Add(time.Minute)
+	w.logProviderFailure("comment", down)
+	lines := strings.Split(strings.TrimSpace(logged.String()), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("%d lines:\n%s", len(lines), logged.String())
+	}
+	for i, want := range []string{"kind=unavailable operation=comment upstream_status=503 not_sent=true", "kind=unavailable operation=create", "kind=uncertain operation=comment upstream_status=unknown not_sent=false", "kind=unavailable operation=comment"} {
+		if !strings.Contains(lines[i], "clawbridge: linear app write failed: "+want) {
+			t.Fatalf("line %d: %s", i, lines[i])
+		}
+	}
+	if strings.Contains(logged.String(), "cbl_") || strings.Contains(logged.String(), "issue's text") {
+		t.Fatal("logged a request's content")
 	}
 }
 

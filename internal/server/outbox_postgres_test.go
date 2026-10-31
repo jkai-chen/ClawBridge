@@ -100,8 +100,14 @@ func TestPostgresOutboxQueuesARateLimitedWrite(t *testing.T) {
 	f := newOutboxFixture(t)
 	// An older client: refused as before, nothing queued.
 	f.mcp.refuse = 1
-	if _, err := f.write("comment", map[string]any{"id": awIssue, "body": "old client", "operation_id": "old-1"}); err == nil || !strings.Contains(err.Error(), "rate_limited, HTTP 429") {
+	_, err := f.write("comment", map[string]any{"id": awIssue, "body": "old client", "operation_id": "old-1"})
+	if code, status := serviceError(err); err == nil || code != "rate_limited" || status != 429 || !strings.Contains(responseMessage(code, err), "nothing was sent") {
 		t.Fatal("an old client's rate-limited write was not refused as before:", err)
+	}
+	if a, e := f.writer.access(context.Background(), f.identity(), bus.Request{Workspace: f.workspace, Project: "p", Session: awSession, Args: map[string]any{"instance": awSession + "-i"}}); e != nil {
+		t.Fatal(e)
+	} else if _, queued, e := f.store.OutboxGet(context.Background(), a.ProjectID, a.SessionID, "old-1"); e != nil || queued {
+		t.Fatal("an old client's refused write was queued", e)
 	}
 	f.mcp.refuse = 1
 	args := map[string]any{"id": awIssue, "body": queuedBody, "operation_id": "q-1"}

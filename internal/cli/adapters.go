@@ -18,7 +18,6 @@ import (
 	"clawbridge/internal/clirender"
 	"clawbridge/internal/doctor"
 	"clawbridge/internal/install"
-	"clawbridge/internal/remote"
 	"clawbridge/internal/tui"
 )
 
@@ -323,69 +322,22 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	if err = checkTUITerminal(os.Stdin, stdout); err != nil {
 		return err
 	}
-	c, path, err := resolveConfig(ctx, flags)
+	in, err := openUIInputs(ctx, flags)
 	if err != nil {
 		return err
 	}
-	bounded, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var executor doctor.Executor
-	var outboxWaiting func() int
-	if c.Mode == "cloud" {
-		var client *remote.Client
-		client, err = remote.New(remoteConfig(c))
-		if err == nil {
-			executor = client
-			var outboxStopped func()
-			outboxWaiting, outboxStopped = tuiOutbox(bounded, client)
-			defer func() {
-				cancel()
-				outboxStopped()
-			}()
-		}
-	} else {
-		var store *bus.Store
-		store, err = bus.Open(c.DB)
-		if err == nil {
-			defer store.Close()
-			executor = store
-		}
-	}
-	if err != nil {
-		return err
-	}
-	workspace := c.Workspace
-	c.Workspace, c.Project, err = executor.ResolveProject(bounded, c.Workspace, c.Project, gitRemote(bounded))
-	// A hosted profile that joined a workspace but has no project yet opens
-	// on "Waiting for a project" (TUI-UX-AUDIT PR D), which saves the
-	// project once one is shared and reopens the TUI on it.
-	waiting := waitForProject(err, c.Mode, workspace, flags.Project, c.Project, func() error { return signedProjectList(bounded, executor, workspace) })
-	if waiting {
-		c.Workspace, err = workspace, nil
-	}
-	if err != nil {
-		return err
-	}
+	defer in.Close()
 	found := ""
-	info := "Provisioning unavailable. This interface never creates infrastructure."
-	if c.Mode == "cloud" {
-		info = "Endpoint: " + c.Server + "\n" + info
-	} else {
-		info = "Local authority.\n" + info
-	}
-	linearSource, e := newLinearTUISource(c, executor)
-	if e != nil {
-		return e
-	}
-	model, err := tui.New(tui.Config{WaitingForProject: waiting, ProjectFound: func(slug string) error {
-		if e := saveFoundProject(path, slug); e != nil {
+	c := in.Config
+	model, err := tui.New(tui.Config{WaitingForProject: in.Waiting, ProjectFound: func(slug string) error {
+		if e := saveFoundProject(in.Path, slug); e != nil {
 			return e
 		}
 		found = slug
 		return nil
-	}, Linear: linearSource, Executor: executor, OutboxWaiting: outboxWaiting, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Principal: c.Principal, DeviceID: c.DeviceID, Context: bounded, InitialScreen: tui.Screen(screen), CloudInfo: info,
+	}, Linear: in.Linear, Executor: in.Executor, OutboxWaiting: in.OutboxWaiting, Mode: tui.Mode(c.Mode), Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, AgentMarker: agentMarker(closesEnv()), Server: c.Server, Principal: c.Principal, DeviceID: c.DeviceID, Context: in.Context, InitialScreen: tui.Screen(screen), CloudInfo: in.Info,
 		Doctor: tui.DoctorFunc(func(ctx context.Context) ([]tui.Check, error) {
-			report, e := collectDoctor(ctx, c, path, executor)
+			report, e := in.Doctor(ctx)
 			if e != nil {
 				return nil, e
 			}
@@ -395,14 +347,17 @@ func runTUI(ctx context.Context, flags Config, args []string, stdout, stderr io.
 	if err != nil {
 		return err
 	}
-	if err = runTUIProgram(bounded, model, os.Stdin, stdout); err != nil || found == "" {
+	if err = runTUIProgram(in.Context, model, os.Stdin, stdout); err != nil || found == "" {
 		return err
 	}
+	// Close this run's inputs (the outbox drain, the local store) before
+	// the next run opens its own.
+	in.Close()
 	// The project was just saved: open the TUI on it, as if started there.
 	// This runs once per save: the saved project resolves, so the next run
 	// can't wait again unless the project is taken away in between, and
 	// then only after the person has seen it and quit.
-	fmt.Fprintf(stderr, "Project %s saved to %s.\n", clirender.Safe(found), path)
+	fmt.Fprintf(stderr, "Project %s saved to %s.\n", clirender.Safe(found), in.Path)
 	return runTUI(ctx, flags, args, stdout, stderr)
 }
 

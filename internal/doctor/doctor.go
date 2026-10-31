@@ -107,7 +107,11 @@ type MCPConfig struct {
 // Input controls deterministic diagnostics. Now and MirrorStaleAfter are
 // injected so freshness tests do not sleep or depend on wall-clock timing.
 type Input struct {
-	Config           Config
+	Config Config
+	// NotSetUp says this machine has no profile at all: no configuration
+	// file and no route from the environment. Doctor then reports one
+	// setup.none failure in place of the checks that need a profile.
+	NotSetUp         bool
 	GitRemote        string
 	Now              time.Time
 	MirrorStaleAfter time.Duration
@@ -227,15 +231,28 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 	report := Report{GeneratedAt: in.Now.UTC().Format(time.RFC3339)}
 	add := func(check Check) { report.Checks = append(report.Checks, check) }
 
-	configOK := checkConfig(in.Config, add)
-	authorityOK, projectsOK := checkAuthority(ctx, in.Config, executor, add)
-	if authorityOK && executor != nil {
-		checkServerMaintenance(executor, add)
+	var authorityOK, resolutionOK bool
+	var wid, pid string
+	if in.NotSetUp {
+		// Nothing to check yet: one answer, not a failure per check that
+		// needs a profile. The agent checks below still run.
+		add(Check{
+			ID: "setup.none", Title: "Set up", Status: Fail,
+			Message: "ClawBridge isn't set up on this machine yet: run clawbridge to start (or clawbridge join with an invite).",
+			Action:  "Run `clawbridge` for guided setup, or `clawbridge join` with an invite.",
+		})
+	} else {
+		configOK := checkConfig(in.Config, add)
+		var projectsOK bool
+		authorityOK, projectsOK = checkAuthority(ctx, in.Config, executor, add)
+		if authorityOK && executor != nil {
+			checkServerMaintenance(executor, add)
+		}
+		checkClientOutbox(ctx, in.Config, add)
+		checkCredentials(ctx, in, configOK, add)
+		wid, pid, resolutionOK = checkResolution(ctx, in.Config, in.GitRemote, executor, authorityOK, projectsOK, add)
+		checkMirror(ctx, in, wid, pid, resolutionOK, add)
 	}
-	checkClientOutbox(ctx, in.Config, add)
-	checkCredentials(ctx, in, configOK, add)
-	wid, pid, resolutionOK := checkResolution(ctx, in.Config, in.GitRemote, executor, authorityOK, projectsOK, add)
-	checkMirror(ctx, in, wid, pid, resolutionOK, add)
 	// The binding is read only for a Linear user (a selected Linear
 	// profile); otherwise doctor stays list-and-resolve only.
 	if in.LinearCapabilities != nil && resolutionOK && executor != nil {

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1381,6 +1382,15 @@ var doctorSkills = func() ([]skill.State, error) {
 	if err != nil {
 		return nil, nil
 	}
+	// An agent folder with nothing in it (an installer made it) is no
+	// agent set up yet: it is treated as missing.
+	targets = slices.DeleteFunc(targets, func(t skill.Target) bool {
+		entries, e := os.ReadDir(filepath.Dir(filepath.Dir(t.Dir)))
+		return e == nil && len(entries) == 0
+	})
+	if len(targets) == 0 {
+		return nil, nil
+	}
 	return skill.Status(targets)
 }
 
@@ -1394,7 +1404,8 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 			CredentialSource: config.CredentialSource,
 			DeviceID:         config.DeviceID, KeyStore: config.KeyStore,
 		},
-		Skills: doctorSkills,
+		Skills:   doctorSkills,
+		NotSetUp: config.NoProfile,
 	}
 	// The hook form and the Claude Code version don't depend on a session.
 	in.Hooks = func() doctor.HooksState { return doctorHooks(ctx) }
@@ -1405,7 +1416,10 @@ func collectDoctor(ctx context.Context, config Config, configPath string, existi
 		in.Playbook = func() playbook.State { return playbook.Find(ctx, ".") }
 	}
 	var executor doctor.Executor = existing
-	if config.Mode == "cloud" && config.CredentialSource == remote.CredentialSourceDevice {
+	if config.NoProfile && existing == nil {
+		// No profile: there is no authority to open, and opening the
+		// default local store would create it on a machine that has none.
+	} else if config.Mode == "cloud" && config.CredentialSource == remote.CredentialSourceDevice {
 		routeConfig := remoteConfig(config)
 		signer, err := remote.NewDeviceSigner(routeConfig)
 		in.Device = &doctor.Device{Err: errors.Unwrap(err)}

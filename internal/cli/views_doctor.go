@@ -33,6 +33,8 @@ func (a doctorAnswer) in(status string) string {
 // check can give with that status. All of one agent's MCP entries (mcp.AGENT.NAME)
 // share "mcp.entry".
 var doctorAnswers = map[string]doctorAnswer{
+	// The message already reads as the answer.
+	"setup.none": {},
 	"config.trusted": {
 		pass: "Your ClawBridge settings are complete.",
 		fail: "Your ClawBridge settings can't be used.",

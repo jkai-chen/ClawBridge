@@ -10,6 +10,7 @@ import (
 
 	"clawbridge/internal/bus"
 	"clawbridge/internal/linearboard"
+	"clawbridge/internal/uiflow"
 )
 
 // Who may cancel (AGENT-CANCEL R11) is a view inside the Linear screen, C
@@ -208,12 +209,9 @@ func (m Model) cancelModalKey(key string) (Model, tea.Cmd) {
 // cancelTyped checks the kind names typed: exactly the list shown.
 func (m Model) cancelTyped() (Model, tea.Cmd) {
 	ask := m.cancel.ask
-	typed := []string{}
-	for _, name := range strings.Split(m.draft, ",") {
-		typed = append(typed, strings.TrimSpace(name))
-	}
+	typed := m.draft
 	m.inputMode, m.draft = inputNone, ""
-	if ask == nil || !slices.Equal(typed, ask.kinds) {
+	if ask == nil || !uiflow.TypedListMatches(ask.kinds, typed) {
 		want := ""
 		if ask != nil {
 			want = strings.Join(ask.kinds, ", ")

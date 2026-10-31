@@ -52,7 +52,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           mcp [--linear-profile ID], mcp install ... [--linear-profile ID] [--channel] (opt-in native Linear tools; Claude Code wake through the ClawBridge channel),
           channel allow [--write [--force]] (admin step), channel setup (install the plugin),
           skill install|status|uninstall [--agent claude-code|codex|all] [--dir SKILLS_DIR] [--force],
-          self-update [--check] [--version vX.Y.Z] [--verify-attestation] [--no-skill] (alias upgrade; replaces this binary with a release),
+          self-update [--check] [--version vX.Y.Z] [--verify-attestation] [--no-skill] (alias upgrade; replaces this binary with a release), self-update --rollback [--no-skill] (puts back the binary the last update replaced),
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           outbox list [--dead] | flush | retry ID | drop ID --confirm drop (writes waiting on this machine),

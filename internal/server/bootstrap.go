@@ -68,8 +68,8 @@ func runBootstrapInvite(ctx context.Context, args []string, stdout io.Writer) er
 			return errors.New("could not read the code from stdin")
 		}
 		// Never echoed: the message names the input only.
-		if _, ok := devicekey.NormalCode(strings.TrimSpace(line)); !ok {
-			return errors.New("stdin holds no invite code (CBJ- and 16 letters and digits)")
+		if !devicekey.StrongCode(strings.TrimSpace(line)) {
+			return errors.New(devicekey.ErrWeakCode)
 		}
 		given = strings.TrimSpace(line)
 	}

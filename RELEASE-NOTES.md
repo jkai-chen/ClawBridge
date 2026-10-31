@@ -1,3 +1,9 @@
+# Unreleased
+
+## Security
+
+- **`operator bootstrap-invite --code-stdin` refuses a weak code.** A wrong guess no longer burns an invite, so only the code's strength protects it, and the server used to check only its format. It now accepts only the form `clawbridge` itself generates (`CBJ-` and 16 random characters in four groups) and refuses an obviously patterned one, without echoing it. `clawbridge cloud bootstrap` already makes such codes; anything else that passes a code must draw it from a cryptographic random generator.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

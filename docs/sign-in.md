@@ -328,6 +328,10 @@ clawbridge operator bootstrap-invite --workspace WORKSPACE
   are all [dormant](#dormant-devices).
 - The code is a secret. The command refuses to print it anywhere but a terminal
   unless given `--force-stdout`.
+- A program that makes the code itself (`--code-stdin`, as `clawbridge cloud bootstrap`
+  does) must use one `clawbridge` generated, or the same form from a cryptographic
+  random generator; the command refuses a weaker one. A wrong guess doesn't burn an
+  invite, so the code's strength is what protects it.
 
 The Compose form and the details are in
 [Deployment: letting the owner in](operations/deployment.md#letting-the-owner-in-operator-bootstrap-invite).

@@ -1,0 +1,9 @@
+{
+  "description": "a write-class name is not registered in P2, so it is method not found",
+  "request": {"jsonrpc": "2.0", "id": 6, "method": "messages.send", "params": {"session": "engineer-a", "body": "hello"}},
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 6,
+    "error": {"code": -32601, "message": "method not found"}
+  }
+}

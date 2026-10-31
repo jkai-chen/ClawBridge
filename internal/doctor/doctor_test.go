@@ -215,3 +215,22 @@ func TestConfigCheckNoProfileYetPointsAtJoin(t *testing.T) {
 		t.Fatalf("%+v", half)
 	}
 }
+
+// With no profile at all, doctor gives one setup.none failure in place of
+// the checks that need a profile, and the report still fails.
+func TestNotSetUpReportsOneSetupCheck(t *testing.T) {
+	report := Run(context.Background(), Input{NotSetUp: true, Config: Config{Present: true, Valid: true, Mode: "local"}}, nil)
+	if report.Status != Fail || report.ExitCode() != 1 {
+		t.Fatalf("status %q", report.Status)
+	}
+	ids := []string{}
+	for _, c := range report.Checks {
+		ids = append(ids, c.ID)
+		if c.ID == "setup.none" && (c.Status != Fail || !strings.Contains(c.Message, "ClawBridge isn't set up on this machine yet: run clawbridge to start (or clawbridge join with an invite)")) {
+			t.Fatalf("%+v", c)
+		}
+	}
+	if len(ids) != 2 || ids[0] != "setup.none" || ids[1] != "mcp.entries" {
+		t.Fatalf("checks %v", ids)
+	}
+}

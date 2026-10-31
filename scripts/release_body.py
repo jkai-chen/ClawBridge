@@ -8,12 +8,14 @@ current RELEASE-NOTES.md with it in every PR and main CI run, so a body too long
 for GitHub fails long before a tag.
 
     release_body.py NOTES OUT VERSION IMAGE [AGENTD_IMAGE AGENT_IMAGE]
-        write the body, or exit non-zero
+        write the body, or exit non-zero; refused unless the top heading is
+        "# ClawBridge VERSION (released ...)"
     release_body.py --manual NOTES OUT VERSION
         write the MANUAL-UPDATE-REQUIRED asset when the release's top section
         carries the marker line (exit 0), or exit 3 when it carries none
 """
 import pathlib
+import re
 import sys
 
 # GitHub refuses a release body of 125000 characters or more; this leaves room.
@@ -58,6 +60,24 @@ def manual_asset(line, version):
     return version + " needs a manual update (clawbridge self-update); see its release notes.\n" + line[:2000] + "\n"
 
 
+# The top heading a release's notes must have at its tag: renaming
+# "# Unreleased" is the cut's step, and a release whose body would start with
+# it, or with another release's heading, is refused before anything is
+# created.
+HEADING = re.compile(r"# ClawBridge (v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)) \(released [^()\n]+\)")
+
+
+def heading_error(notes, version):
+    """None when the first line names this release, else why not."""
+    first = notes.split("\n", 1)[0].rstrip("\r")
+    m = HEADING.fullmatch(first)
+    if m is None:
+        return 'the top heading of RELEASE-NOTES.md is %r, not "# ClawBridge %s (released DATE)": rename it at the cut' % (first[:80], version)
+    if m.group(1) != version:
+        return "the top heading of RELEASE-NOTES.md is for %s, not %s" % (m.group(1), version)
+    return None
+
+
 def verify_line(image):
     return "`gh attestation verify oci://" + image + " --repo jkai-chen/ClawBridge --signer-workflow jkai-chen/ClawBridge/.github/workflows/release.yml`"
 
@@ -96,8 +116,12 @@ def main(argv):
         sys.exit(__doc__)
     notes, out, version, image = argv[1:5]
     agents = argv[5:7]
+    text = pathlib.Path(notes).read_text(encoding="utf-8")
+    error = heading_error(text, version)
+    if error is not None:
+        sys.exit(error + "; nothing was created")
     try:
-        body = check(release_body(pathlib.Path(notes).read_text(encoding="utf-8"), version, image, *agents))
+        body = check(release_body(text, version, image, *agents))
     except ValueError as e:
         sys.exit(str(e) + "; nothing was created")
     pathlib.Path(out).write_text(body, encoding="utf-8")

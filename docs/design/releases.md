@@ -221,6 +221,11 @@ linux/amd64 and linux/arm64, built from the repository's `Dockerfile` in the sam
     server image. `scripts/release_body.py` builds it, and refuses one over 120000 characters before any release
     exists. Every PR and main CI run checks today's notes the same way (`scripts/test_publish.py`), so an oversize
     section fails long before a tag.
+  - **The top heading names the release.** At the tag, the notes' first line must be exactly
+    `# ClawBridge VERSION (released DATE)` for the version being released. `release_body.py` refuses anything else,
+    such as `# Unreleased`, another version's heading, or a heading with no `(released …)`, so a tag on notes the
+    cut didn't rename stops before anything is created. Both the tag-push run and `publish-draft` build the body
+    this way. CI checks only the size, since main's notes start with `# Unreleased` between releases.
   - **Manual-update marker.** A release whose client change needs a person's
     attention, such as a sign-in method going away, starts a line of its top
     section with `**Manual update required.**`, followed by the reason. Only a
@@ -339,6 +344,9 @@ Two checks, each a separate PR when it changes anything, merged before the tag:
   a size the provider retired, is updated in all of them so they agree. The PR says which prices were checked and
   on what date; a table nobody could check says so in its PR rather than changing silently.
 
+The cut commit itself renames the notes' `# Unreleased` heading to `# ClawBridge vX.Y.Z (released D Mon)`; the tag
+goes on that commit, or the release run stops (see "The top heading names the release" above).
+
 ## Releasing v1.0 (hold, soak, publish)
 
 v1.0.0 is tagged once, held as a draft, soaked on its own image, and published
@@ -349,7 +357,7 @@ alike, and the binaries and the image report v1.0.0 from the start.
 Sunday, at the freeze:
 
 1. Set the hold: `gh variable set RELEASE_HOLD_DRAFT --body true`.
-2. Tag v1.0.0 at the freeze commit and push the tag.
+2. Tag v1.0.0 at the freeze commit, whose notes start `# ClawBridge v1.0.0 (released …)`, and push the tag.
 3. Approve the `release` environment when the run asks.
 4. The run ends with `held as draft: v1.0.0; image ghcr.io/jkai-chen/clawbridge@sha256:…;
    publish with the publish-draft workflow`. The draft is not public and not Latest.

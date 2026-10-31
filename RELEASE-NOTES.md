@@ -132,6 +132,10 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   - It refuses an env file that is a link.
 - **The database on the root disk, by your stated choice, now backs up.** With `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` the
   backup no longer refuses because the data path isn't a separate mount.
+- **A release's notes must be renamed before its tag.** The release run (and `publish-draft`) refuses to build the
+  release body unless the tagged notes' first line is `# ClawBridge VERSION (released DATE)` for the version being
+  released; `# Unreleased`, another version's heading or a heading without a date stops it before anything is
+  created, with what to rename. No schema change. Linear config scope: none.
 
 ## Onboarding
 

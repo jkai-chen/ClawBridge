@@ -162,6 +162,75 @@ func TestNotificationCodexRetriesWithSameFixedHintAndOnlyAdvancesAfterAcceptance
 	}
 }
 
+// A Codex probe that times out or fails to run is retried with the loop's
+// backoff, said once, and no hint is sent until it passes; a help text that
+// ran without queue support is permanent.
+func TestNotificationCodexProbeRetriesUntilItRuns(t *testing.T) {
+	c := config(t)
+	c.Binding.Adapter = "codex"
+	c.Binding.Thread = "00000000-0000-4000-8000-0000000000a2"
+	c.CodexCommand = fakeCodex(t)
+	c.Once = false
+	probes, hints := 0, 0
+	c.Executor = executorFunc(func(context.Context, bus.Request) (bus.Result, error) { return result(2, 42, 2), nil })
+	c.Runner = RunnerFunc(func(_ context.Context, _ string, args []string) ([]byte, error) {
+		if reflect.DeepEqual(args, []string{"queue", "--help"}) {
+			probes++
+			switch probes {
+			case 1:
+				return nil, errors.New("Codex queue command failed or timed out; acceptance may be uncertain")
+			case 2:
+				return []byte(" \n"), nil // exit 0 with nothing: no usable output either
+			}
+			return []byte("queue --thread --message"), nil
+		}
+		if probes < 3 {
+			t.Fatal("a hint before the probe passed")
+		}
+		hints++
+		return []byte("queued"), nil
+	})
+	c.Wait = func(context.Context, time.Duration) error {
+		if hints > 0 {
+			return context.Canceled
+		}
+		return nil
+	}
+	var diag bytes.Buffer
+	c.Diagnostics = &diag
+	if e := Run(context.Background(), c); !errors.Is(e, context.Canceled) {
+		t.Fatal(e)
+	}
+	if probes != 3 || hints != 1 || load(t, c.StatePath).After != 42 {
+		t.Fatal(probes, hints, load(t, c.StatePath).After)
+	}
+	if n := strings.Count(diag.String(), "codex_probe_retrying"); n != 1 {
+		t.Fatalf("said the slow probe %d times: %s", n, diag.String())
+	}
+}
+
+func TestNotificationCodexWithoutQueueIsPermanent(t *testing.T) {
+	c := config(t)
+	c.Binding.Adapter = "codex"
+	c.Binding.Thread = "00000000-0000-4000-8000-0000000000a3"
+	c.CodexCommand = fakeCodex(t)
+	c.Once = false
+	c.Executor = executorFunc(func(context.Context, bus.Request) (bus.Result, error) {
+		t.Fatal("polled without queue support")
+		return bus.Result{}, nil
+	})
+	c.Runner = RunnerFunc(func(_ context.Context, _ string, args []string) ([]byte, error) {
+		if !reflect.DeepEqual(args, []string{"queue", "--help"}) {
+			t.Fatal("ran a hint", args)
+		}
+		return []byte("usage: codex exec PROMPT"), nil
+	})
+	c.Wait = func(context.Context, time.Duration) error { t.Fatal("retried a permanent failure"); return nil }
+	if e := Run(context.Background(), c); !IsPermanent(e) || !strings.Contains(e.Error(), "capability unavailable") {
+		t.Fatal(e)
+	}
+}
+
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }

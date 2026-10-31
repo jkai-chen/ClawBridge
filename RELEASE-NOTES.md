@@ -54,6 +54,13 @@
   hook-made binding checks the transcript again, so a link put at its path or on a directory above it since is
   refused. docs/reference/api.md. No schema change. Linear config scope: none.
 
+- **A slow Codex capability check no longer stops the notify watcher.** `notify --adapter codex` checked `codex queue
+  --help` once before its first notice and stopped for good on any failure, so one slow start (a newly built or
+  scanned binary on Windows, a loaded machine) ended the watcher. Now only a help text that runs without
+  `queue --thread --message` stops it; a check that times out or fails to run is retried with the watcher's backoff,
+  logged once as `codex_probe_retrying`, and no notice goes out until it passes. No schema change. Linear config
+  scope: none.
+
 ## Sign-in
 
 - **Google sign-in is removed; device keys are the only sign-in.** Removed: the Google OAuth sign-in (`clawbridge

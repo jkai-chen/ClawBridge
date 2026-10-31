@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -103,13 +104,34 @@ func Run(ctx context.Context, c Config) error {
 		return err
 	}
 	defer f.close()
-	if c.Binding.Adapter == "codex" {
+	// Codex's queue support is checked before its first hint. Only a help
+	// text that ran and lacks queue --thread --message is permanent; a
+	// probe that timed out or failed to run (a slow first start, a scanned
+	// new binary) is retried with the loop's backoff, said once, and no hint
+	// is sent until it passes.
+	probed := c.Binding.Adapter != "codex"
+	probeFailed := false
+	probe := func() error {
 		bounded, cancel := context.WithTimeout(ctx, c.HostTimeout)
 		output, e := c.Runner.Run(bounded, path, []string{"queue", "--help"})
 		cancel()
-		if e != nil || !supportsQueue(output) {
-			return Permanent(errors.New("Codex queue capability unavailable; use a CLI supporting queue --thread --message"))
+		switch {
+		case e == nil && supportsQueue(output):
+			probed = true
+			return nil
+		case e == nil && len(bytes.TrimSpace(output)) > 0:
+			// It ran and said something else: no queue support (or help over
+			// 16 KiB, which supportsQueue doesn't read).
+			return Permanent(errors.New("Codex queue capability unavailable (its queue --help lacks queue --thread --message, or is over 16 KiB); use a CLI supporting queue --thread --message"))
 		}
+		// No usable output: an error, a timeout or an empty answer.
+		if !probeFailed {
+			probeFailed = true
+			if err := diagnostic(c.Diagnostics, "codex_probe_retrying", nil); err != nil {
+				return Permanent(err)
+			}
+		}
+		return errors.New("Codex queue capability check timed out or failed to run; retrying")
 	}
 	if !c.Once {
 		// The watcher holds the session's process: it keeps its lease.
@@ -151,7 +173,13 @@ func Run(ctx context.Context, c Config) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		err = once(ctx, c, path, f, &state, &skipped)
+		err = nil
+		if !probed {
+			err = probe()
+		}
+		if err == nil {
+			err = once(ctx, c, path, f, &state, &skipped)
+		}
 		if err != nil {
 			if c.Once || IsPermanent(err) || ctx.Err() != nil {
 				return err

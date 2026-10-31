@@ -71,7 +71,11 @@ MCP configuration or discover the intended thread from a session name.
 clawbridge --session reviewer --instance INSTANCE notify --adapter codex --thread THREAD_UUID --state /absolute/private/reviewer-codex-notify.json
 ```
 
-The selected Codex CLI must expose `queue --thread --message`. You can select an
+The selected Codex CLI must expose `queue --thread --message`: the watcher checks
+`codex queue --help` before its first notice, and stops if that help runs without
+them. A check that times out or fails to run (a slow first start, say) is retried
+with the watcher's backoff and logged once (`codex_probe_retrying`); no notice goes
+out until it passes. You can select an
 absolute executable with `--codex-command /absolute/path/to/codex`. The adapter
 keeps the existing Codex account, model and execution permissions. It queues a
 fixed metadata-only notice without including peer text or typing into a terminal.
@@ -529,7 +533,8 @@ The caller consumes the result; a match does not itself queue a model turn.
 ## Recovery
 
 Ctrl-C stops polling and child processes. Temporary transport/host failures back
-off; authorization, fencing, incompatible state and capability failures stop.
+off; authorization, fencing, incompatible state and a Codex CLI without queue
+support stop.
 The watcher does not advance its checkpoint after a failed hint. A crash after
 host acceptance but before saving state can duplicate a hint; stable event IDs
 help identify it. The agent's durable inbox/read state remains the processing record.

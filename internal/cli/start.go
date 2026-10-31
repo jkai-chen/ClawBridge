@@ -22,7 +22,8 @@ Linear issues, and work as a team. Pick how you want to start:
 
   1. Just this machine     Local messaging between agents on this computer. No server, no account.
   2. Join a team server    Someone invited you (a server address and an invite code).
-  3. Set up my own server  Host ClawBridge for your team (a small cloud VM, about $15–30/month, this machine, or your own server).
+  3. Set up my own server  Host ClawBridge for your team (a small cloud VM, this machine, or your own server);
+                           you see the monthly cost before anything is created.
 `
 
 // startCommands is what Start prints without a terminal: the command behind

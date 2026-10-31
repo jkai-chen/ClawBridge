@@ -314,7 +314,7 @@ func TestLocalNoAgentNamesTheGuide(t *testing.T) {
 		!strings.Contains(out.String(), "On this machine or your LAN instead (no cloud): see docs/operations/local-host.md (deploy/local-host.sh up).") {
 		t.Fatal(err, out.String())
 	}
-	if !strings.Contains(startText, "this machine, or your own server).") || !strings.Contains(startCommands, "docs/operations/local-host.md") {
+	if !strings.Contains(startText, "this machine, or your own server);") || strings.Contains(startText, "$") || !strings.Contains(startCommands, "docs/operations/local-host.md") {
 		t.Fatal(startText + startCommands)
 	}
 }

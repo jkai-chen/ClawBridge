@@ -127,8 +127,9 @@ On your own server you need, before anything else:
 
 A small server is enough for a team. The playbooks carry a fixed estimate table
 per size and cloud.
-- **Google Cloud:** about $21.50 a month on `e2-small` and $34 on `e2-medium`, with its
-  disk, static IP and backups.
+- **Google Cloud (`us-central1` or `europe-west1`):** `e2-small` is about $21.50 a month and `e2-medium` about $34,
+  with the boot and data disks, static IP and backups. The static IP is billed while reserved, even with the VM
+  stopped.
 - **AWS (`us-east-1`):** `t4g.small` is about $19 a month and `t4g.medium` about
   $31.50, with the encrypted data volume, Elastic IP and S3 backups. Other
   regions cost up to about 25% more. The Elastic IP is billed while allocated,

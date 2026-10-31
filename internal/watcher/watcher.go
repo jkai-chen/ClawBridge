@@ -95,7 +95,9 @@ type Store interface {
 	WatchTicked(ctx context.Context, projectID string, ok bool, failure string) error
 	IntakeSystemState(ctx context.Context, projectID string) (bus.IntakeState, error)
 	IntakeCursorSet(ctx context.Context, projectID, source, subject, polled string, signal bool) error
+	IntakeCursorSoon(ctx context.Context, projectID, source, subject string) error
 	IntakeEnqueueSystem(ctx context.Context, projectID string, ev bus.IntakeEvent) (string, error)
+	IntakeEnqueueNew(ctx context.Context, projectID string, ev bus.IntakeEvent) (string, error)
 	IntakeAttribution(ctx context.Context, projectID, issue, kind, target string, from, to time.Time) (bus.AttributionCredit, error)
 	ExecuteDispatcher(ctx context.Context, projectID, session string, r bus.Request) (bus.Result, error)
 	// WebhookMiss counts an event a poll found that the team's webhook
@@ -136,6 +138,12 @@ type Watcher struct {
 	// docsFirst: a cut-off page showed the app's document list is oldest
 	// first, so its oldest end is read with first, not last.
 	docsFirst bool
+	// skipLogged is when each intake skip was last logged, so one stuck
+	// issue is logged once an hour (see skipped).
+	skipLogged map[string]time.Time
+	// noLabelLogged is each project's teams with no needs-agent label as
+	// the last summary line named them.
+	noLabelLogged map[string]string
 }
 
 type userCheck struct {

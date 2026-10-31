@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -46,8 +49,12 @@ const (
 	// refuses the first: between them, either shape serves.
 	labelledQuery    = `query Labelled($team: ID!, $labels: [ID!], $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $team } }, labels: { some: { id: { in: $labels } } }, updatedAt: { gt: $since } }) { nodes { id updatedAt team { id } project { id } labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } pageInfo { hasNextPage endCursor } } }`
 	labelledOneQuery = `query LabelledOne($team: ID!, $label: ID!, $since: DateTimeOrDuration!, $after: String) { issues(first: 50, after: $after, filter: { team: { id: { eq: $team } }, labels: { id: { eq: $label } }, updatedAt: { gt: $since } }) { nodes { id updatedAt team { id } project { id } labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } pageInfo { hasNextPage endCursor } } }`
-	historyQuery     = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { history(first: $first, after: $after) { nodes { createdAt actorId botActor { id } addedLabelIds toDelegate { id } } pageInfo { hasNextPage endCursor } } } }`
-	labelsQuery      = `query IssueLabels($id: String!) { issue(id: $id) { id labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } }`
+	// The history reads are two, so one signal's fields can never break the
+	// other's. S1 asks only for the fields the issue history read of
+	// linearapp proves against Linear; S2 adds the delegate transitions.
+	historyQueryS1 = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { createdAt creator { id app } history(first: $first, after: $after) { nodes { createdAt actorId actor { id } botActor { id } addedLabelIds } pageInfo { hasNextPage endCursor } } } }`
+	historyQueryS2 = `query History($id: String!, $first: Int!, $after: String) { issue(id: $id) { history(first: $first, after: $after) { nodes { createdAt actorId botActor { id } toDelegate { id } } pageInfo { hasNextPage endCursor } } } }`
+	labelsQuery    = `query IssueLabels($id: String!) { issue(id: $id) { id labels(first: 50) { nodes { id } pageInfo { hasNextPage } } } }`
 	// needsAgentQuery is a team's needs-agent label set through the app:
 	// the labels of the name that the team, its parent and the workspace
 	// hold, as LabelSetV2 lists them through the team's label listings.
@@ -95,6 +102,119 @@ func (p *IntakePoll) skip(why string) {
 	p.Skipped[why]++
 }
 
+// skipLogEvery is how often one (project, signal, issue, reason) skip may
+// be logged: a stuck issue is read every poll and must not flood the log.
+const skipLogEvery = time.Hour
+
+// errClass is an error's class for the log: a code, never Linear's or the
+// bus's text, which could carry issue content.
+func errClass(err error) string {
+	var app *linearapp.Error
+	var provider *linearprovider.Error
+	switch {
+	case err == nil:
+		return ""
+	case linearapp.IsQueryInvalid(err):
+		// The schema identifier the error names, when it names one.
+		if errors.As(err, &app) && app.Field != "" {
+			return "graphql_validation:" + app.Field
+		}
+		return "graphql_validation"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &app):
+		switch app.Code {
+		case "rate_limited":
+			return app.Code
+		case "unavailable":
+			if app.Status != 0 {
+				return fmt.Sprintf("http_%d", app.Status)
+			}
+			return app.Code
+		}
+		return "graphql_error"
+	case errors.As(err, &provider) && provider.Kind != "":
+		return provider.Kind
+	}
+	return "error"
+}
+
+// skipped counts a skipped candidate and logs one line for it, at most once
+// an hour per project, signal, issue and reason. issue is Linear's
+// identifier or UUID, and only of an issue inside the binding; class (optional) is an error class. No Linear text
+// is ever logged.
+func (r *intakeRun) skipped(signal, issue, reason, class string) {
+	r.poll.skip(reason)
+	// An issue outside the binding leaves no trace but its count: no line
+	// names it. The no_label row is a spill of the same kind.
+	switch reason {
+	case "not_in_binding", "other_team", "no_label":
+		return
+	}
+	now := r.w.now()
+	key := r.pid + "|" + signal + "|" + issue + "|" + reason
+	r.w.mu.Lock()
+	if r.w.skipLogged == nil {
+		r.w.skipLogged = map[string]time.Time{}
+	}
+	if at, ok := r.w.skipLogged[key]; ok && now.Sub(at) < skipLogEvery {
+		r.w.mu.Unlock()
+		return
+	}
+	for k, at := range r.w.skipLogged {
+		if now.Sub(at) >= skipLogEvery {
+			delete(r.w.skipLogged, k)
+		}
+	}
+	r.w.skipLogged[key] = now
+	r.w.mu.Unlock()
+	if class != "" {
+		reason += " (" + class + ")"
+	}
+	verb := "skipped"
+	if strings.HasPrefix(reason, "pending_") {
+		verb, reason = "pending", strings.TrimPrefix(reason, "pending_")
+	}
+	logf("watcher: intake: project %s %s %s %s: %s", r.pid, signal, issue, verb, reason)
+}
+
+// spillReasons are skips of issues outside the binding or its label: they
+// are counted, and never worth a line of their own.
+var spillReasons = map[string]bool{"not_in_binding": true, "other_team": true, "no_label": true}
+
+// logSkips logs an intake pass's skip counts, sorted, and the teams with no
+// needs-agent label: codes and counts only. A pass with nothing but spill
+// counts logs nothing, unless the teams with no label changed since the
+// last line for the project.
+func (w *Watcher) logSkips(pid string, p *IntakePoll) {
+	noLabel := strings.Join(p.NoLabel, ",")
+	w.mu.Lock()
+	changed := noLabel != w.noLabelLogged[pid]
+	if noLabel != "" && changed {
+		if w.noLabelLogged == nil {
+			w.noLabelLogged = map[string]string{}
+		}
+		w.noLabelLogged[pid] = noLabel
+	} else if noLabel == "" {
+		delete(w.noLabelLogged, pid)
+	}
+	w.mu.Unlock()
+	worth := noLabel != "" && changed
+	parts := []string{}
+	for _, k := range slices.Sorted(maps.Keys(p.Skipped)) {
+		worth = worth || !spillReasons[k]
+		parts = append(parts, fmt.Sprintf("%s=%d", k, p.Skipped[k]))
+	}
+	if !worth {
+		return
+	}
+	line := "watcher: intake: project " + pid + " skips: " + strings.Join(parts, " ")
+	if noLabel != "" {
+		line += " no_label_teams: " + noLabel
+	}
+	logf("%s", strings.TrimSuffix(line, " "))
+}
+
 type pageInfo struct {
 	HasNextPage bool   `json:"hasNextPage"`
 	EndCursor   string `json:"endCursor"`
@@ -120,12 +240,15 @@ type intakeRun struct {
 	// mcpLabels: Linear refused needsAgentQuery once this run, so the
 	// needs-agent sets are resolved through LabelSetV2 for the rest of it.
 	mcpLabels bool
+	// pending counts the candidates whose history had not caught up yet.
+	pending int
 }
 
 // intake polls the project's due intake sources under the watch lease and
 // charges their Linear calls to its budget.
 func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bus.Request, pid string, fence map[string]any) (*IntakePoll, error) {
 	poll := &IntakePoll{}
+	defer func() { w.logSkips(pid, poll) }()
 	st, err := w.Store.IntakeSystemState(ctx, pid)
 	if err != nil {
 		return poll, err
@@ -232,6 +355,7 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 		return
 	}
 	start := time.Now()
+	pending := r.pending
 	signal, complete, err := read(ctx, subject, since.Add(-intakeLag))
 	if r.poll.TookMS == nil {
 		r.poll.TookMS = map[string]int64{}
@@ -250,6 +374,11 @@ func (r *intakeRun) source(ctx context.Context, source, subject string, read fun
 		polled = cursor.Time
 	}
 	_ = r.w.Store.IntakeCursorSet(ctx, r.pid, source, subject, polled, signal)
+	if r.pending > pending {
+		// The cursor's re-read window (intakeLag) still covers the pending
+		// issues; read again soon, not at the hourly or quarter-hour wait.
+		_ = r.w.Store.IntakeCursorSoon(ctx, r.pid, source, subject)
+	}
 }
 
 // labelled is S1: the team's issues carrying a label of its needs-agent
@@ -362,7 +491,7 @@ func (r *intakeRun) labelledBy(ctx context.Context, team string, labels, set []s
 				// team's own read returns it; any other is dropped and
 				// counted.
 				if n.Team == nil || !contains(r.binding.LinearTeamIDs, n.Team.ID) {
-					r.poll.skip("other_team")
+					r.skipped("S1", n.ID, "other_team", "")
 				}
 				continue
 			}
@@ -380,7 +509,7 @@ func (r *intakeRun) labelledBy(ctx context.Context, team string, labels, set []s
 			// A row whose labels run past one page may carry the set's label
 			// further on: candidate's own read decides it.
 			if label == "" && !n.Labels.PageInfo.HasNextPage {
-				r.poll.skip("no_label")
+				r.skipped("S1", n.ID, "no_label", "")
 				continue
 			}
 			if label == "" {
@@ -389,7 +518,7 @@ func (r *intakeRun) labelledBy(ctx context.Context, team string, labels, set []s
 			// The row's project rules it out of a project set's binding;
 			// a row without one is left to candidate's read.
 			if r.binding.Mode == "project_set" && n.Project != nil && !contains(r.binding.LinearProjectIDs, n.Project.ID) {
-				r.poll.skip("not_in_binding")
+				r.skipped("S1", n.ID, "not_in_binding", "")
 				continue
 			}
 			*signal = r.candidate(ctx, "S1", n.ID, carries, "", "", &attribution{kind: "label", target: label, set: set, since: since}) || *signal
@@ -670,18 +799,32 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 	issue, err := r.svc.IssueV2(ctx, r.scope, issueID)
 	if err != nil {
 		if linearboard.IsOutOfScope(err) {
-			r.poll.skip("not_in_binding")
+			r.skipped(signal, issueID, "not_in_binding", "")
 		} else {
-			r.poll.skip("issue_unreadable")
+			r.skipped(signal, issueID, "issue_unreadable", errClass(err))
 		}
 		return false
+	}
+	name := issue.Identifier
+	if name == "" {
+		name = issue.ID
 	}
 	bot := false
 	var credit bus.AttributionCredit
 	if matches != nil {
-		entry, found, err := r.transition(ctx, issue.ID, matches)
+		history := historyQueryS1
+		if signal == "S2" {
+			history = historyQueryS2
+		}
+		entry, found, info, err := r.transition(ctx, issue.ID, history, matches)
 		if err != nil {
-			r.poll.skip("actor_unreadable")
+			// The history could not be read: the issue is still a signal
+			// Linear's own filter proved, so a person is told of it, with
+			// no trusted actor, unless the queue already knows it.
+			if r.wait(signal, name, issue, "actor_unreadable", errClass(err)) {
+				return true
+			}
+			r.fallback(ctx, signal, name, issue, "actor_unreadable", errClass(err))
 			return true
 		}
 		if !found {
@@ -689,12 +832,35 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 			// entry. Only an attribution, the one write in the whole poll
 			// window, with the label proven on the issue by ID now, can
 			// stand for it.
-			if attr == nil || attr.since.IsZero() || !r.labelOn(ctx, issue, append([]string{attr.target}, attr.set...)) {
-				r.poll.skip("transition_not_found")
-				return true
+			labelled := false
+			if attr != nil && !attr.since.IsZero() {
+				labelled = r.labelOn(ctx, issue, append([]string{attr.target}, attr.set...))
 			}
-			if credit = r.attributed(ctx, issue.ID, attr, attr.since, r.w.now()); credit.Result != "credited" {
-				r.poll.skip(cmpOr(credit.Result, "transition_not_found"))
+			if labelled {
+				credit = r.attributed(ctx, issue.ID, attr, attr.since, r.w.now())
+				if credit.Result != "" && credit.Result != "credited" {
+					r.skipped(signal, name, credit.Result, "")
+					return true
+				}
+			}
+			if credit.Result != "credited" {
+				// No entry and no attribution. History can trail a change
+				// by minutes, so the candidate waits out intakeLag; then,
+				// if the creator is the only actor Linear recorded and the
+				// label is on the issue, the creator set it.
+				if r.wait(signal, name, issue, "transition_not_found", "") {
+					return true
+				}
+				switch {
+				case signal == "S1" && labelled && info.OnlyCreator && info.Creator != r.app.AppUserID && newIssue(info.CreatedAt, issue.UpdatedAt):
+					r.creatorQueue(ctx, signal, name, issue, info.Creator, info.CreatedAt)
+				case signal == "S2":
+					// The detection query proved the app is the issue's
+					// delegate now; only the entry is missing.
+					r.fallback(ctx, signal, name, issue, "transition_not_found", "")
+				default:
+					r.skipped(signal, name, "transition_not_found", "")
+				}
 				return true
 			}
 		} else {
@@ -707,7 +873,7 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
 			credit = r.attributed(ctx, issue.ID, attr, t.Add(-bus.AttributionAfter), t.Add(bus.AttributionBefore))
 			if credit.Result != "" && credit.Result != "credited" {
-				r.poll.skip(credit.Result)
+				r.skipped(signal, name, credit.Result, "")
 			}
 		}
 	}
@@ -727,6 +893,23 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 	if credit.Result == "credited" {
 		actor, trusted, via = credit.Actor, true, credit.Principal
 	}
+	ev := intakeEvent(signal, issue, actor, trusted, at, via)
+	result, err := r.w.Store.IntakeEnqueueSystem(ctx, r.pid, ev)
+	switch {
+	case err != nil:
+		r.skipped(signal, name, "queue_failed", errClass(err))
+	case result == "queued":
+		r.poll.Queued = append(r.poll.Queued, issue.ID)
+		r.miss(ctx, issue.TeamID, at)
+	default:
+		r.skipped(signal, name, result, "")
+	}
+	return true
+}
+
+// intakeEvent is the queue event for an issue: hashes of its text, never
+// the text.
+func intakeEvent(signal string, issue linearprovider.IssueV2, actor string, trusted bool, at, via string) bus.IntakeEvent {
 	title := sha256.Sum256([]byte(issue.Title))
 	ev := bus.IntakeEvent{Signal: signal, Actor: actor, Trusted: trusted, At: at, Via: via, Issue: bus.IntakeIssue{UUID: issue.ID, Identifier: issue.Identifier, TitleSHA256: hex.EncodeToString(title[:]), DescriptionSHA256: issue.DescriptionSHA256, UpdatedAt: issue.UpdatedAt}}
 	if issue.ProjectKnown {
@@ -735,17 +918,107 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 	if issue.LabelsKnown {
 		ev.Issue.Labels = issue.LabelNames
 	}
-	result, err := r.w.Store.IntakeEnqueueSystem(ctx, r.pid, ev)
+	return ev
+}
+
+// wait holds a candidate whose history shows no proof yet while its issue
+// was updated within intakeLag: Linear's history can trail a change by
+// minutes, and the source is read again soon (see source). It logs one
+// "pending" line, rate-limited, and reports whether the candidate waits;
+// after the window the caller gives up.
+func (r *intakeRun) wait(signal, name string, issue linearprovider.IssueV2, reason, class string) bool {
+	updated, err := time.Parse(time.RFC3339Nano, issue.UpdatedAt)
+	if err != nil || r.w.now().Sub(updated) >= intakeLag {
+		return false
+	}
+	r.pending++
+	detail := "retry"
+	if class != "" {
+		detail = class + ", retry"
+	}
+	r.skipped(signal, name, "pending_"+reason, detail)
+	return true
+}
+
+// newIssue: the issue was created within intakeLag before its last update,
+// so its label can be the creator's at creation; an older issue keeps
+// today's path, or any later update of it would count. It does not use the
+// read's window: the soon re-polls move the cursor past the creation.
+func newIssue(createdAt, updatedAt string) bool {
+	c, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return false
+	}
+	u, err := time.Parse(time.RFC3339Nano, updatedAt)
+	return err == nil && !c.Before(u.Add(-intakeLag))
+}
+
+// creatorQueue queues an S1 issue whose label the creator set, on the
+// proof of candidate: trusted if the creator is (the list, then the team
+// roles), else untrusted. Like fallback, it queues only an issue the project
+// has no row for.
+func (r *intakeRun) creatorQueue(ctx context.Context, signal, name string, issue linearprovider.IssueV2, creator, createdAt string) {
+	trusted := r.state.Trusted[creator]
+	if trusted {
+		r.poll.trust("list")
+	} else {
+		trusted = r.trustedByRole(ctx, issue.TeamID, creator)
+	}
+	actor := ""
+	if trusted {
+		actor = creator
+	}
+	// The event is stamped with the issue's creation, so a dismissed or
+	// closed item stays closed (its close is later), and a trusted creator
+	// goes by the normal enqueue; an untrusted one only into a free slot.
+	ev := intakeEvent(signal, issue, actor, trusted, createdAt, "")
+	var result string
+	var err error
+	if trusted {
+		result, err = r.w.Store.IntakeEnqueueSystem(ctx, r.pid, ev)
+	} else {
+		result, err = r.w.Store.IntakeEnqueueNew(ctx, r.pid, ev)
+	}
 	switch {
 	case err != nil:
-		r.poll.skip("queue_failed")
+		r.skipped(signal, name, "queue_failed", errClass(err))
 	case result == "queued":
 		r.poll.Queued = append(r.poll.Queued, issue.ID)
-		r.miss(ctx, issue.TeamID, at)
+		how := "untrusted"
+		if trusted {
+			how = "trusted"
+		}
+		logf("watcher: intake: project %s %s %s queued: creator (%s)", r.pid, signal, name, how)
+	case result == "has_row":
+		r.skipped(signal, name, "transition_not_found", "")
 	default:
-		r.poll.skip(result)
+		r.skipped(signal, name, result, "")
 	}
-	return true
+}
+
+// fallback queues an issue whose actor could not be proven, untrusted (no
+// actor, so the coordinator is told and nothing starts), but only when the
+// project has no queue row for it in any state: a dismissed, closed or
+// queued item is never reopened or changed by it. Otherwise it is skipped
+// and logged as before. Each queued fallback logs one line.
+func (r *intakeRun) fallback(ctx context.Context, signal, name string, issue linearprovider.IssueV2, reason, class string) {
+	ev := intakeEvent(signal, issue, "", false, r.w.now().UTC().Format(time.RFC3339Nano), "")
+	result, err := r.w.Store.IntakeEnqueueNew(ctx, r.pid, ev)
+	switch {
+	case err != nil:
+		r.skipped(signal, name, "queue_failed", errClass(err))
+	case result == "queued":
+		r.poll.Queued = append(r.poll.Queued, issue.ID)
+		why := reason
+		if class != "" {
+			why += " (" + class + ")"
+		}
+		logf("watcher: intake: project %s %s %s queued untrusted: %s", r.pid, signal, name, why)
+	case result == "has_row":
+		r.skipped(signal, name, reason, class)
+	default:
+		r.skipped(signal, name, result, "")
+	}
 }
 
 // miss counts a queued candidate as a webhook miss for its team when its
@@ -818,11 +1091,17 @@ func cmpOr(a, b string) string {
 
 // transition finds the newest history entry that matches: the transition
 // that made the issue a signal now (probe I4).
-func (r *intakeRun) transition(ctx context.Context, issue string, matches func(historyEntry) bool) (historyEntry, bool, error) {
+func (r *intakeRun) transition(ctx context.Context, issue, query string, matches func(historyEntry) bool) (historyEntry, bool, historyInfo, error) {
 	var after any
+	info := historyInfo{OnlyCreator: true}
 	for page := 0; page < historyPages; page++ {
 		var out struct {
 			Issue struct {
+				CreatedAt string `json:"createdAt"`
+				Creator   *struct {
+					ID  string `json:"id"`
+					App bool   `json:"app"`
+				} `json:"creator"`
 				History struct {
 					Nodes    []historyEntry `json:"nodes"`
 					PageInfo pageInfo       `json:"pageInfo"`
@@ -830,20 +1109,48 @@ func (r *intakeRun) transition(ctx context.Context, issue string, matches func(h
 			} `json:"issue"`
 		}
 		r.poll.Calls++
-		if err := r.w.App.GraphQL(ctx, historyQuery, map[string]any{"id": issue, "first": 20, "after": after}, &out); err != nil {
-			return historyEntry{}, false, err
+		if err := r.w.App.GraphQL(ctx, query, map[string]any{"id": issue, "first": 20, "after": after}, &out); err != nil {
+			return historyEntry{}, false, info, err
+		}
+		info.CreatedAt = out.Issue.CreatedAt
+		if out.Issue.Creator != nil {
+			info.Creator = out.Issue.Creator.ID
+			if out.Issue.Creator.App {
+				// An integration, not a person.
+				info.Creator = ""
+			}
 		}
 		for _, n := range out.Issue.History.Nodes {
 			if matches(n) {
-				return n, true, nil
+				return n, true, info, nil
+			}
+			if info.Creator == "" || n.ActorID != info.Creator || n.BotActor != nil {
+				info.OnlyCreator = false
 			}
 		}
 		if !out.Issue.History.PageInfo.HasNextPage {
-			break
+			info.OnlyCreator = info.OnlyCreator && info.Creator != ""
+			return historyEntry{}, false, info, nil
 		}
 		after = out.Issue.History.PageInfo.EndCursor
 	}
-	return historyEntry{}, false, nil
+	// The walk stopped before the oldest entry: nothing is proven about it.
+	info.OnlyCreator = false
+	return historyEntry{}, false, info, nil
+}
+
+// historyInfo is what an unmatched history walk shows about the issue's
+// creator. Linear records a label's add by another actor as that actor's
+// own entry, so a history of the creator's entries only, or none, means
+// the creator set the label (S1 only; S2's query does not ask).
+//
+// OnlyCreator holds only for a complete walk (every page read, the last
+// with no next page), a creator who is a person, and no bot entry.
+// CreatedAt is the issue's creation time.
+type historyInfo struct {
+	Creator     string
+	OnlyCreator bool
+	CreatedAt   string
 }
 
 // userCheckTTL is how old a user's eligibility read may be when a role

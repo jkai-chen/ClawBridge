@@ -296,3 +296,25 @@ func (h *harness) historyRows(entity string) []map[string]any {
 	}
 	return out
 }
+
+// IntakeEnqueueNew queues an issue the project has no row for, and for one
+// it has, in any state, changes nothing.
+func TestIntakeEnqueueNewOnlyWithoutARow(t *testing.T) {
+	h := newAttributionHarness(t)
+	h.call("coordinator_set", "c", map[string]any{"target_session": "c"})
+	ev := IntakeEvent{Signal: "S1", At: stamp(), Issue: IntakeIssue{UUID: intakeIssue, Identifier: "FIX-7", TitleSHA256: "t", DescriptionSHA256: "d", UpdatedAt: stamp()}}
+	ctx := context.Background()
+	if got, err := h.s.IntakeEnqueueNew(ctx, h.pid, ev); err != nil || got != "queued" {
+		t.Fatal(got, err)
+	}
+	if _, err := h.s.db.Exec(`UPDATE intake_queue SET state='dismissed',closed_at=?`, stamp()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.s.IntakeEnqueueNew(ctx, h.pid, ev); err != nil || got != "has_row" {
+		t.Fatal(got, err)
+	}
+	var state string
+	if err := h.s.db.QueryRow(`SELECT state FROM intake_queue`).Scan(&state); err != nil || state != "dismissed" {
+		t.Fatal(state, err)
+	}
+}

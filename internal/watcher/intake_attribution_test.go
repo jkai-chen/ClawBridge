@@ -116,6 +116,7 @@ func TestIntakeS1WithoutATransitionUsesTheAttribution(t *testing.T) {
 	e.f.issueLabels = map[string][]string{issueA: {labelNeeds}, issueB: {labelNeeds}, issueC: {labelNeeds}}
 	e.record(issueA, owner, "", "")
 	e.record(issueC, owner, "eng", "")
+	pastWindow(e)
 	e.dueNow()
 	tick := e.tick()
 	if tick.Intake == nil || len(tick.Intake.Queued) != 1 || tick.Intake.Skipped["transition_not_found"] != 1 || tick.Intake.Skipped["attributed_untrusted"] != 1 {
@@ -132,6 +133,7 @@ func TestIntakeS1WithoutATransitionUsesTheAttribution(t *testing.T) {
 // used as it stands.
 func TestIntakeS1WithoutATransitionNeedsTheLabelByID(t *testing.T) {
 	e, owner := attributed(t)
+	pastWindow(e)
 	e.f.labelled = []string{issueA, issueB, issueC}
 	// issueA's list runs past one page, issueB's lacks the label, and
 	// issueC's board read carries label IDs without it.
@@ -206,6 +208,7 @@ func TestIntakeAttributionLabelOnTakesTheSet(t *testing.T) {
 		}
 	}
 	e.tick()
+	pastWindow(e)
 	e.dueNow()
 	tick := e.tick()
 	if tick.Intake == nil || len(tick.Intake.Queued) != 2 || tick.Intake.Skipped["transition_not_found"] != 1 {

@@ -171,6 +171,16 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   already set is never replaced), so `whoami` needs no `--project` and `clawbridge cloud check workspace`, the first
   deployment's check after creating the project, passes. Its `no_workspace` advice now says to create the first
   project or set `CLAWBRIDGE_PROJECT`, not to run `setup --cloud`. Linear config scope: none.
+- **Intake no longer drops a hand-labelled or delegated issue without a trace.** Every skipped candidate now logs one
+  line (reason and an error class, never issue text; at most hourly per issue) and each intake pass logs its skip counts.
+  The S1 and S2 history reads are separate queries, so a field one lacks can't break the other. When the history can't
+  be read, or lags a fresh change (Linear can take minutes), the candidate waits and its source is read again in two
+  minutes; after the 10-minute window an issue whose history stays unreadable (or, for a delegation, shows no entry) and
+  has no queue row is queued as untrusted (the coordinator is told, nothing starts), and an existing row, dismissed or
+  closed included, is never reopened. A needs-agent label set by the issue's creator at or just after creation counts
+  as the creator's: Linear records no history entry for it, so once the 10-minute window has passed with no other
+  actor's entry, a trusted creator's issue is queued as trusted (an untrusted creator's as untrusted). Linear config
+  scope: none.
 
 ## Operations
 

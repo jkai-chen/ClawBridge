@@ -56,6 +56,15 @@ type fakeLinear struct {
 	// delegatedMore makes every delegated page say there is another.
 	delegatedMore bool
 	history       map[string][]map[string]any
+	// historyErr fails every history read.
+	historyErr error
+	// historyOnly limits historyErr to one history query, when set.
+	historyOnly string
+	// creator, creatorApp, createdAt and historyMore shape the S1 history
+	// answer: the issue's creator (an integration if creatorApp), its
+	// creation time, and a first page that is cut off.
+	creator, createdAt      string
+	creatorApp, historyMore bool
 	// issueLabels answers the app's read of an issue's label IDs; an issue
 	// not in it is unreadable. labelsMore says each list has another page.
 	issueLabels map[string][]string
@@ -358,8 +367,15 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 			return errors.New("user unreadable")
 		}
 		data = map[string]any{"user": u}
-	case historyQuery:
-		data = map[string]any{"issue": map[string]any{"history": map[string]any{"nodes": a.f.history[vars["id"].(string)], "pageInfo": map[string]any{"hasNextPage": false}}}}
+	case historyQueryS1, historyQueryS2:
+		if a.f.historyErr != nil && (a.f.historyOnly == "" || a.f.historyOnly == query) {
+			return a.f.historyErr
+		}
+		issue := map[string]any{"history": map[string]any{"nodes": a.f.history[vars["id"].(string)], "pageInfo": map[string]any{"hasNextPage": a.f.historyMore, "endCursor": "more"}}}
+		if a.f.creator != "" && query == historyQueryS1 {
+			issue["creator"], issue["createdAt"] = map[string]any{"id": a.f.creator, "app": a.f.creatorApp}, a.f.createdAt
+		}
+		data = map[string]any{"issue": issue}
 	case delegatedQuery:
 		nodes := []any{}
 		for _, id := range a.f.delegated {

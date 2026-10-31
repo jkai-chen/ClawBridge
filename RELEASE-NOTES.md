@@ -23,6 +23,14 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   it arrived intact but not who built it. To also check that ClawBridge's release workflow built it from the
   release's tag, set `CLAWBRIDGE_VERIFY=required` (the install scripts then need the GitHub CLI) or run
   `clawbridge self-update --verify-attestation`. Turning this check on by default is planned after 1.0.
+- **The description guard can refuse an unchanged description that mentions issues, on a server that writes as
+  the ClawBridge app.** `--expect-description-sha256` (`expected_description_sha256`) is checked against the
+  description as the app reads it, but `description_sha256` comes from your own read. Linear can return issue mention
+  tags differently to the two, so the hashes differ although nothing changed. The guard fails safe: the update is
+  refused and nothing is sent. To send it anyway, re-read the issue with `linear issue` immediately before sending,
+  and send without the guard, with a new operation ID, only if `updated_at` and the description are unchanged. Send it
+  straight after that read: without the guard, an edit made in between would be overwritten. Never do this on an issue
+  a person may be editing. A guard that does not depend on how the text is read is planned after 1.0.
 
 ## Sign-in
 

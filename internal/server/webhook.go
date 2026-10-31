@@ -523,6 +523,46 @@ func parseWebhookSecrets(raw string) (map[string][]string, error) {
 	return out, nil
 }
 
+// appWebhookSecretsMax is how many values CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET
+// holds: the current one, and the old one during a rotation.
+const appWebhookSecretsMax = 2
+
+// parseAppWebhookSecret reads CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET: one
+// value, or two comma-separated during a rotation. A value is 16-256
+// printable ASCII characters with no space or comma, and the two differ.
+// Empty means no app webhook. Errors name the position (1 or 2), never a
+// value.
+func parseAppWebhookSecret(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	values := strings.Split(raw, ",")
+	if len(values) > appWebhookSecretsMax {
+		return nil, fmt.Errorf("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET holds at most %d values", appWebhookSecretsMax)
+	}
+	for i, v := range values {
+		if len(v) < webhookSecretMin || len(v) > webhookSecretMax {
+			return nil, fmt.Errorf("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET value %d: a secret is %d-%d characters", i+1, webhookSecretMin, webhookSecretMax)
+		}
+		for _, c := range []byte(v) {
+			if c <= ' ' || c > '~' {
+				return nil, fmt.Errorf("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET value %d: a secret is printable ASCII with no space", i+1)
+			}
+		}
+	}
+	if len(values) == 2 && values[0] == values[1] {
+		return nil, errors.New("CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET value 2 repeats value 1; a rotation needs two different secrets")
+	}
+	return values, nil
+}
+
+// CheckAppWebhookSecret reports whether raw is a valid
+// CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET. Its errors never show a value.
+func CheckAppWebhookSecret(raw string) error {
+	_, err := parseAppWebhookSecret(raw)
+	return err
+}
+
 // webhookStartStore is what a start records about webhooks.
 type webhookStartStore interface {
 	WebhookTeamsConfigured(ctx context.Context, teams []string, now time.Time) error

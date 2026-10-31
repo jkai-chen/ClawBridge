@@ -65,7 +65,15 @@ func TestEveryProvenGateIsShown(t *testing.T) {
 	for _, name := range bus.ProvenGateNames {
 		shown[name] = true
 	}
-	keys := regexp.MustCompile(`getenv\("CLAWBRIDGE_([A-Z_]+)_PROVEN"\)`).FindAllStringSubmatch(string(src), -1)
+	// The app webhook gate is read but inert until FR32 shows it; drop this
+	// exemption when it joins bus.ProvenGateNames.
+	reserved := map[string]bool{"APP_WEBHOOK": true}
+	var keys [][]string
+	for _, k := range regexp.MustCompile(`getenv\("CLAWBRIDGE_([A-Z_]+)_PROVEN"\)`).FindAllStringSubmatch(string(src), -1) {
+		if !reserved[k[1]] {
+			keys = append(keys, k)
+		}
+	}
 	if len(keys) != len(shown) {
 		t.Fatalf("the server reads %d gates and the overview shows %d", len(keys), len(shown))
 	}

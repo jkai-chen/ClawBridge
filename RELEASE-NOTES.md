@@ -1,3 +1,9 @@
+# Unreleased
+
+## Docs
+
+- **Intake's `needs-agent` label.** docs/linear.md now says to use the team's own `needs-agent` label or a workspace one, not both (a bound parent team's own counts alongside), that a workspace label next to the team's own leaves intake reading nothing for that team, that intake rechecks the label at most hourly, and to set the label after the issue exists.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

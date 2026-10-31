@@ -19,8 +19,12 @@ import (
 // pass a minute per project: signals in between collapse into one, which
 // runs when the minute is up. A Linear webhook's nudge (FR14) asks for a
 // webhook pass instead, the comment watch and intake of the project whose
-// cursors a delivery marked due, and coalesces the same way (Q10). It runs
-// only beside the in-process clock, never in a request.
+// cursors a delivery marked due, and coalesces the same way (Q10). So does
+// an intake source's own due time inside the clock's interval, which the
+// nudger reads from the bus after each tick and pass (FR41): a webhook
+// pass at that time, never the dispatcher or markers. A new claim's
+// proposal asks for a fallback pass, so the dispatcher decides it within
+// the minute. It runs only beside the in-process clock, never in a request.
 
 // nudgeEvery is the least time between two nudged passes of one project.
 const nudgeEvery = time.Minute
@@ -55,9 +59,15 @@ type nudger struct {
 	// project's ID, or "".
 	project func(ctx context.Context, workspace, project string) (string, error)
 	now     func() time.Time
+	// dueAt reads each project's earliest intake due time inside the
+	// clock's interval from the bus; nil asks for nothing.
+	dueAt func(ctx context.Context) (map[string]time.Time, error)
 
 	mu   sync.Mutex
 	last map[string]time.Time
+	// due is dueAt's last answer: when each project's intake next wants a
+	// webhook pass.
+	due map[string]time.Time
 	// pending is each project waiting for a pass, and the kinds it asks
 	// for.
 	pending map[string]nudgeKinds
@@ -65,17 +75,29 @@ type nudger struct {
 	wake    chan struct{}
 }
 
-type target struct{ workspace, project string }
+type target struct {
+	workspace, project string
+	kind               nudgeKinds
+}
 
 func newNudger(flight *singleFlight, markers markerPasser, project func(context.Context, string, string) (string, error)) *nudger {
-	return &nudger{flight: flight, markers: markers, project: project, now: time.Now, last: map[string]time.Time{}, pending: map[string]nudgeKinds{}, wake: make(chan struct{}, 1)}
+	return &nudger{flight: flight, markers: markers, project: project, now: time.Now, last: map[string]time.Time{}, due: map[string]time.Time{}, pending: map[string]nudgeKinds{}, wake: make(chan struct{}, 1)}
 }
 
 // Nudge asks for a marker pass of the request's project. It never blocks.
-func (n *nudger) Nudge(workspace, project string) {
+func (n *nudger) Nudge(workspace, project string) { n.askRequest(workspace, project, nudgeMarkers) }
+
+// NudgeDispatch asks for a fallback pass, markers then dispatcher, of the
+// request's project: a new claim's proposal, which the dispatcher decides
+// within the minute instead of at the next tick. It never blocks.
+func (n *nudger) NudgeDispatch(workspace, project string) {
+	n.askRequest(workspace, project, nudgeFallback)
+}
+
+func (n *nudger) askRequest(workspace, project string, kind nudgeKinds) {
 	n.mu.Lock()
 	if len(n.asked) < 100 {
-		n.asked = append(n.asked, target{workspace, project})
+		n.asked = append(n.asked, target{workspace, project, kind})
 	}
 	n.mu.Unlock()
 	select {
@@ -111,11 +133,58 @@ func (n *nudger) markersPending(pid string) {
 	n.pending[pid] |= nudgeMarkers
 }
 
+// refreshDue replaces the due times with the bus's current answer. A read
+// that fails keeps the old ones; the clock still reads every due source.
+func (n *nudger) refreshDue(ctx context.Context) {
+	if n.dueAt == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	due, err := n.dueAt(ctx)
+	if err != nil {
+		log.Printf("watcher: nudge: intake due times unavailable")
+		return
+	}
+	n.mu.Lock()
+	n.due = due
+	n.mu.Unlock()
+}
+
+// nextDue is the earliest due time of any project, or the zero time.
+func (n *nudger) nextDue() time.Time {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var first time.Time
+	for _, t := range n.due {
+		if first.IsZero() || t.Before(first) {
+			first = t
+		}
+	}
+	return first
+}
+
 // Ticked marks pending each project whose tick's marker pass stopped with
 // rows left, so a nudge pass with its own deadline drains them without
-// waiting for a confirm or a release. It never blocks.
+// waiting for a confirm or a release. It reads the intake due times (at most
+// 10 seconds) and never blocks on the flight.
 func (n *nudger) Ticked(got any) {
-	ticks, _ := got.([]watcher.ProjectTick)
+	ticks, isTicks := got.([]watcher.ProjectTick)
+	// The tick may have moved sources' due times, and the wait of the
+	// nudger's timer follows them.
+	n.refreshDue(context.Background())
+	failed := false
+	for _, t := range ticks {
+		failed = failed || t.Error != ""
+	}
+	if isTicks && !failed {
+		// One line per tick, so an idle watcher reads as healthy.
+		next := "none"
+		if due := n.nextDue(); !due.IsZero() {
+			next = due.UTC().Format("15:04:05Z")
+		}
+		log.Printf("watcher: tick: %d project(s) ok, next intake due %s", len(ticks), next)
+	}
 	left := false
 	n.mu.Lock()
 	for _, t := range ticks {
@@ -124,8 +193,9 @@ func (n *nudger) Ticked(got any) {
 			left = true
 		}
 	}
+	hasDue := len(n.due) > 0
 	n.mu.Unlock()
-	if left {
+	if left || hasDue {
 		select {
 		case n.wake <- struct{}{}:
 		default:
@@ -169,7 +239,7 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 		}
 		if pid != "" {
 			n.mu.Lock()
-			n.markersPending(pid)
+			n.pending[pid] |= t.kind
 			n.mu.Unlock()
 		}
 	}
@@ -231,6 +301,11 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 			n.last[pid] = n.now()
 		}
 		n.mu.Unlock()
+		if ran {
+			// The pass read the sources that were due and set their next
+			// times.
+			n.refreshDue(ctx)
+		}
 		if !ran {
 			// A tick holds the flight: try again shortly, never alongside it.
 			return nudgeRetry
@@ -239,12 +314,22 @@ func (n *nudger) serve(ctx context.Context) time.Duration {
 }
 
 // next is a pending project whose minute is up, and the kinds it asks
-// for, or, with none, how long until the soonest pending one is.
+// for, or, with none, how long until the soonest pending one is, or the
+// soonest intake due time. A due time that has come asks for a webhook
+// pass only, and is spent: the pass's refresh brings the sources' next.
 func (n *nudger) next() (string, time.Duration, nudgeKinds) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	now := n.now()
 	soonest := time.Duration(0)
+	for pid, t := range n.due {
+		if left := t.Sub(now); left <= 0 {
+			n.pending[pid] |= nudgeWebhook
+			delete(n.due, pid)
+		} else if soonest == 0 || left < soonest {
+			soonest = left
+		}
+	}
 	for pid, kinds := range n.pending {
 		left := nudgeEvery - now.Sub(n.last[pid])
 		if left <= 0 {

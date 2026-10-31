@@ -16,6 +16,9 @@ sys.dont_write_bytecode = True
 import release_body  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+# The tagged notes' top heading: the release being published (release_body.py
+# refuses any other).
+TOP = "# ClawBridge v0.1.0 (released 1 Jan)"
 BINARIES = ["clawbridge_v0.1.0_" + t for t in ["darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64", "windows_amd64.exe", "windows_arm64.exe"]]
 # Every asset a release publishes: the attested ones, SHA256SUMS, and the
 # attestation bundle (FR24).
@@ -106,7 +109,7 @@ class PublishTests(unittest.TestCase):
         self.repo = self.root / "source"
         self.repo.mkdir()
         (self.repo / "marker").write_text("isolated tag fixture")
-        (self.repo / "RELEASE-NOTES.md").write_text("Tagged release fixture notes\n")
+        (self.repo / "RELEASE-NOTES.md").write_text(TOP + "\n\nTagged release fixture notes\n")
         self.env = os.environ.copy()
         self.env.update(GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test", GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test", GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="push", GITHUB_REF="refs/tags/v0.1.0", GITHUB_REPOSITORY="jkai-chen/ClawBridge", PUBLISH_FIXTURE=str(self.root), IMAGE_DIGEST=DIGEST, AGENTD_IMAGE_DIGEST=AGENTD_DIGEST, AGENT_IMAGE_DIGEST=AGENT_DIGEST, FIXTURE_IMAGE=IMAGE)
         for args in [("init", "-q"), ("add", "."), ("commit", "-qm", "fixture"), ("tag", "v0.1.0")]:
@@ -166,18 +169,39 @@ class PublishTests(unittest.TestCase):
     def test_the_body_is_the_top_section_of_a_long_file(self):
         # v0.3.10's failure: the whole file was the body, over GitHub's limit.
         older = "".join("# ClawBridge v0.0.%d (released)\n\n- " % i + "x" * 2000 + "\n\n" for i in range(80))
-        self.retag("# Unreleased\n\n## Linear\n\n- the new bullet\n\n" + older)
+        self.retag(TOP + "\n\n## Linear\n\n- the new bullet\n\n" + older)
         self.publish(ok=True)
         notes = (self.root / "notes").read_text()
-        self.assertTrue(notes.startswith("# Unreleased\n\n## Linear\n\n- the new bullet\n\nThe full release notes: "), notes[:200])
+        self.assertTrue(notes.startswith(TOP + "\n\n## Linear\n\n- the new bullet\n\nThe full release notes: "), notes[:200])
         self.assertNotIn("v0.0.1 (released)", notes)
         self.assertIn("## Server image", notes)
         self.assertLess(len(notes), release_body.MAX_BODY)
 
     def test_a_top_section_too_long_fails_before_any_release(self):
-        self.retag("# Unreleased\n\n- " + "y" * (release_body.MAX_BODY + 10) + "\n\n# ClawBridge v0.0.1\n")
+        self.retag(TOP + "\n\n- " + "y" * (release_body.MAX_BODY + 10) + "\n\n# ClawBridge v0.0.1\n")
         calls = self.publish()
         self.assertNotIn(["release", "create"], [c[:2] for c in calls])
+
+    def test_the_top_heading_must_name_this_release(self):
+        # The cut renames "# Unreleased"; a tag on notes it didn't fails here,
+        # before anything is created.
+        cases = {
+            "unreleased": ("# Unreleased\n\n- a\n\n# ClawBridge v0.0.1 (released 1 Jan)\n", "is '# Unreleased', not \"# ClawBridge v0.1.0 (released DATE)\": rename it at the cut"),
+            "another version": ("# ClawBridge v0.0.9 (released 1 Jan)\n\n- a\n", "is for v0.0.9, not v0.1.0"),
+            "no date": ("# ClawBridge v0.1.0\n\n- a\n", "is '# ClawBridge v0.1.0', not \"# ClawBridge v0.1.0 (released DATE)\": rename it at the cut"),
+        }
+        for name, (notes, why) in cases.items():
+            with self.subTest(name):
+                self.reset()
+                self.retag(notes)
+                self.write_bundle()
+                result = subprocess.run(["bash", str(ROOT / "scripts/publish-release.sh"), "v0.1.0", str(self.assets)], cwd=self.repo, env=dict(self.env, PUBLISH_MODE="ok"), capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("the top heading of RELEASE-NOTES.md " + why, result.stderr)
+                self.assertIn("nothing was created", result.stderr)
+                calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()] if (self.root / "calls").exists() else []
+                self.assertNotIn(["release", "create"], [c[:2] for c in calls])
+                self.assertNotIn(["release", "edit"], [c[:2] for c in calls])
 
     def publish(self, mode="ok", ok=False):
         if self.fresh_bundle:
@@ -238,7 +262,7 @@ class PublishTests(unittest.TestCase):
                 self.assertEqual(self.publish(), [])
 
     def test_a_manual_update_marker_publishes_its_asset(self):
-        self.retag("# Unreleased\n\n**Manual update required.** Google sign-in is gone; sign in again with GitHub.\n\n- a bullet\n\n# ClawBridge v0.0.1\n")
+        self.retag(TOP + "\n\n**Manual update required.** Google sign-in is gone; sign in again with GitHub.\n\n- a bullet\n\n# ClawBridge v0.0.1\n")
         self.publish(ok=True)
         self.assertEqual(self.remote(), PUBLISHED | {"MANUAL-UPDATE-REQUIRED"})
         text = (self.root / "remote" / "MANUAL-UPDATE-REQUIRED").read_text()
@@ -247,9 +271,9 @@ class PublishTests(unittest.TestCase):
 
     def test_the_marker_counts_only_at_a_line_start_in_this_release(self):
         cases = {
-            "an older release": "# Unreleased\n\n- a\n\n# ClawBridge v0.0.1\n\n**Manual update required.** old\n",
-            "a code fence": "# Unreleased\n\n```md\n**Manual update required.** an example\n```\n",
-            "mid-line": "# Unreleased\n\n- auto-updates skip a release marked `**Manual update required.**`\n",
+            "an older release": TOP + "\n\n- a\n\n# ClawBridge v0.0.1\n\n**Manual update required.** old\n",
+            "a code fence": TOP + "\n\n```md\n**Manual update required.** an example\n```\n",
+            "mid-line": TOP + "\n\n- auto-updates skip a release marked `**Manual update required.**`\n",
         }
         for name, notes in cases.items():
             with self.subTest(name):
@@ -504,12 +528,12 @@ class PublishTests(unittest.TestCase):
         self.assertNotIn("--notes-file", [c for c in calls if c[:2] == ["release", "edit"]][0])
         self.assertFalse((self.root / "published-notes").exists())
         self.reset()
-        self.retag("# Unreleased\n\n- the held release\n\n# ClawBridge v0.0.1\n")
+        self.retag(TOP + "\n\n- the held release\n\n# ClawBridge v0.0.1\n")
         self.hold()
         self.publish_draft(ok=True)
         notes = (self.root / "published-notes").read_text()
         # The body is set again from the draft's own digest assets, all three images.
-        self.assertEqual(notes, release_body.release_body("# Unreleased\n\n- the held release\n\n# ClawBridge v0.0.1\n", "v0.1.0", IMAGE, "ghcr.io/jkai-chen/clawbridge-agentd@" + AGENTD_DIGEST, "ghcr.io/jkai-chen/clawbridge-dispatcher-agent@" + AGENT_DIGEST))
+        self.assertEqual(notes, release_body.release_body(TOP + "\n\n- the held release\n\n# ClawBridge v0.0.1\n", "v0.1.0", IMAGE, "ghcr.io/jkai-chen/clawbridge-agentd@" + AGENTD_DIGEST, "ghcr.io/jkai-chen/clawbridge-dispatcher-agent@" + AGENT_DIGEST))
 
     def test_publish_draft_decides_latest_like_a_tag_push(self):
         self.hold()
@@ -657,7 +681,7 @@ class PublishTests(unittest.TestCase):
         self.assertIn("image " + self.env["FIXTURE_IMAGE"], result.stdout)
 
     def test_the_manual_marker_is_required_in_the_draft_iff_the_notes_carry_it(self):
-        self.retag("# Unreleased\n\n**Manual update required.** Google sign-in is gone; sign in again with GitHub.\n\n- a bullet\n\n# ClawBridge v0.0.1\n")
+        self.retag(TOP + "\n\n**Manual update required.** Google sign-in is gone; sign in again with GitHub.\n\n- a bullet\n\n# ClawBridge v0.0.1\n")
         self.hold()
         self.assertIn("MANUAL-UPDATE-REQUIRED", self.remote())
         self.publish_draft(ok=True)
@@ -731,6 +755,16 @@ class ReleaseBodyTests(unittest.TestCase):
     def test_manual_line_reads_this_release_only(self):
         self.assertEqual(release_body.manual_line("# Unreleased\n**Manual update required.** why\n# ClawBridge v1\n"), "**Manual update required.** why")
         self.assertIsNone(release_body.manual_line("# Unreleased\n- a\n# ClawBridge v1\n**Manual update required.** old\n"))
+
+    def test_heading_error_names_the_release_and_nothing_else(self):
+        self.assertIsNone(release_body.heading_error("# ClawBridge v1.0.0 (released 2 Nov)\n- a\n", "v1.0.0"))
+        self.assertIsNone(release_body.heading_error("# ClawBridge v1.0.0 (released 2 Nov)\r\n- a\n", "v1.0.0"))
+        for notes in ["# Unreleased\n", "", "\n# ClawBridge v1.0.0 (released 2 Nov)\n", "# ClawBridge v1.0.0\n",
+                      "# ClawBridge v1.0.0 (released 2 Nov) and more\n", "# ClawBridge v1.0.0.1 (released 2 Nov)\n",
+                      "# ClawBridge v01.0.0 (released 2 Nov)\n", "## ClawBridge v1.0.0 (released 2 Nov)\n"]:
+            with self.subTest(notes):
+                self.assertIsNotNone(release_body.heading_error(notes, "v1.0.0"))
+        self.assertIn("is for v0.5.0, not v1.0.0", release_body.heading_error("# ClawBridge v0.5.0 (released 1 Nov)\n", "v1.0.0"))
 
     def test_the_repositorys_notes_fit_a_release_body(self):
         # The guard that runs in every PR and main CI: today's RELEASE-NOTES.md

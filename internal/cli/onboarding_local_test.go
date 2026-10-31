@@ -9,7 +9,25 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
+
+// profileProject is the profile file's own project key, parsed: never a
+// substring of the whole file, which holds random ids and temporary paths.
+func profileProject(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]any{}
+	if err = toml.Unmarshal(raw, &values); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := values["project"].(string)
+	return project
+}
 
 func clearRouteEnv(t *testing.T) {
 	t.Helper()
@@ -44,9 +62,8 @@ func TestFirstLocalProjectBecomesTheDefault(t *testing.T) {
 	invoke(t, "setup", "--local", "--name", "demo")
 	invoke(t, "project", "create", "first")
 	invoke(t, "project", "create", "second")
-	raw, _ := os.ReadFile(filepath.Join(home, "state", "config.toml"))
-	if !strings.Contains(string(raw), "first") || strings.Contains(string(raw), "second") {
-		t.Fatal(string(raw))
+	if got := profileProject(t, filepath.Join(home, "state", "config.toml")); got != "first" {
+		t.Fatalf("default project %q, want first", got)
 	}
 	invoke(t, "register", "eng", "--instance", "eng-i")
 }
@@ -66,14 +83,14 @@ func TestCloudProfileKeepsItsFirstDefaultProject(t *testing.T) {
 	if err := writeDefaultProject(path, "cloud", "second", false); err != nil {
 		t.Fatal(err)
 	}
+	if got := profileProject(t, path); got != "first" {
+		t.Fatalf("default project %q, want first", got)
+	}
 	raw, _ := os.ReadFile(path)
-	for _, want := range []string{"project = 'first'", "device_id = 'dev_example'", "key_store = 'keyring'", "credential_source = 'device'", "mode = 'cloud'", "server = 'https://clawbridge.example.test'"} {
+	for _, want := range []string{"device_id = 'dev_example'", "key_store = 'keyring'", "credential_source = 'device'", "mode = 'cloud'", "server = 'https://clawbridge.example.test'"} {
 		if !strings.Contains(strings.ReplaceAll(string(raw), `"`, "'"), want) {
 			t.Fatalf("missing %s in:\n%s", want, raw)
 		}
-	}
-	if strings.Contains(string(raw), "second") {
-		t.Fatal("a later project replaced the default:\n" + string(raw))
 	}
 	if info, err := os.Stat(path); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatal(info.Mode(), err)
@@ -86,8 +103,8 @@ func TestCloudProfileKeepsItsFirstDefaultProject(t *testing.T) {
 	if err := writeDefaultProject(chosen, "cloud", "other", false); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := os.ReadFile(chosen); !strings.Contains(strings.ReplaceAll(string(raw), `"`, "'"), "project = 'mine'") || strings.Contains(string(raw), "other") {
-		t.Fatal(string(raw))
+	if got := profileProject(t, chosen); got != "mine" {
+		t.Fatalf("default project %q, want the chosen mine", got)
 	}
 }
 
@@ -109,15 +126,15 @@ func TestDefaultProjectNeedsAFileOfTheSameMode(t *testing.T) {
 	if err := writeDefaultProject(local, "cloud", "hosted", false); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := os.ReadFile(local); strings.Contains(string(raw), "hosted") {
-		t.Fatal("a hosted project landed in a local profile:\n" + string(raw))
+	if got := profileProject(t, local); got != "" {
+		t.Fatalf("a hosted project %q landed in a local profile", got)
 	}
 	// The same mode-less file is local: a local project is its default.
 	if err := writeDefaultProject(local, "local", "mine", false); err != nil {
 		t.Fatal(err)
 	}
-	if raw, _ := os.ReadFile(local); !strings.Contains(strings.ReplaceAll(string(raw), `"`, "'"), "project = 'mine'") {
-		t.Fatal(string(raw))
+	if got := profileProject(t, local); got != "mine" {
+		t.Fatalf("default project %q, want mine", got)
 	}
 }
 

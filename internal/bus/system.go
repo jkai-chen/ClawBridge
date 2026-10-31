@@ -378,6 +378,35 @@ func (s *Store) IntakeCursorSoon(ctx context.Context, pid, source, subject strin
 	return tx.Commit()
 }
 
+// IntakeDueAt is, for each project, the earliest time an active intake
+// source is next due to be read, among those due after now and no later
+// than within from now. A source already due is the clock's to read, and
+// one due past within waits for a clock tick anyway, so neither is
+// listed. The server's nudges wake a project's intake pass at that time
+// instead of at the next tick. It is one read of the cursor table.
+func (s *Store) IntakeDueAt(ctx context.Context, within time.Duration) (map[string]time.Time, error) {
+	tx, err := s.beginIntake(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	now, err := dbStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := query(ctx, tx, `SELECT project_id,MIN(next_poll_at) AS due FROM watch_cursors WHERE source LIKE 'intake-%' AND active_until IS NULL AND next_poll_at>? AND next_poll_at<=? GROUP BY project_id`, now, layout(at(now).Add(within)))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]time.Time, len(rows))
+	for _, r := range rows {
+		if due := at(str(r, "due")); !due.IsZero() {
+			out[str(r, "project_id")] = due
+		}
+	}
+	return out, nil
+}
+
 // IntakeEnqueueSystem queues one event from the server's intake watcher.
 // A transition at or before its issue's closed row's close counts only
 // after a rearm (§3.5, IN2-L2).

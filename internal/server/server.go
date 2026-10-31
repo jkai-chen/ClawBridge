@@ -161,6 +161,10 @@ type HandlerOptions struct {
 	// project after its confirm or release commits; nil without a watcher
 	// clock; it never blocks.
 	Nudge func(workspace, project string)
+	// NudgeDispatch asks the watcher for an early fallback pass of a
+	// request's project, markers then dispatcher, after a proposal
+	// commits; nil without a watcher clock; it never blocks.
+	NudgeDispatch func(workspace, project string)
 	// NudgeProject asks the watcher for an early pass of a project by its
 	// ID, which runs its dispatcher; nil without a watcher clock; it never
 	// blocks.
@@ -507,6 +511,10 @@ func NewHandlerWithOptions(store Executor, verifier Verifier, o HandlerOptions) 
 		// The confirm or release has committed: its marker rows are due now.
 		if o.Nudge != nil && (request.Operation == "assignment_confirm" || request.Operation == "assignment_release") {
 			o.Nudge(request.Workspace, request.Project)
+		}
+		// A new claim: the dispatcher decides it within the minute.
+		if o.NudgeDispatch != nil && request.Operation == "assignment_propose" {
+			o.NudgeDispatch(request.Workspace, request.Project)
 		}
 		if request.Operation == "whoami" {
 			if data, ok := result.Data.(map[string]any); ok {

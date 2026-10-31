@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -232,7 +235,7 @@ func TestNudgeRidesBesideTheWatcherClock(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	writer := &AppWriter{App: &linearapp.App{}}
-	if opts := startWatcher(ctx, store, watchSettings{interval: time.Hour}, HandlerOptions{Writer: writer}); opts.Nudge == nil {
+	if opts := startWatcher(ctx, store, watchSettings{interval: time.Hour}, HandlerOptions{Writer: writer}); opts.Nudge == nil || opts.NudgeDispatch == nil {
 		t.Fatal("no nudge beside the clock")
 	}
 	if opts := startWatcher(ctx, store, watchSettings{tickAudience: "https://cb.example.com/v1/tick", tickAccount: "tick@example.iam.gserviceaccount.com"}, HandlerOptions{Writer: writer}); opts.Nudge != nil {
@@ -426,5 +429,185 @@ func TestTickLeftoversNeverDispatch(t *testing.T) {
 	n.serve(context.Background())
 	if p.count() != 3 {
 		t.Fatal("the fallback ran again:", p.pids)
+	}
+}
+
+// A committed proposal asks for a dispatcher pass, and no other operation,
+// nor a refused proposal, does; a proposal never asks for a marker pass.
+func TestHandlerNudgesTheDispatcherAfterAProposal(t *testing.T) {
+	verifier := VerifierFunc(func(context.Context, string) (Identity, error) {
+		return Identity{Principal: "ada@example.com", Subject: "s"}, nil
+	})
+	for _, c := range []struct {
+		op      string
+		fail    bool
+		nudged  bool
+		markers bool
+	}{
+		{"assignment_propose", false, true, false},
+		{"assignment_propose", true, false, false},
+		{"assignment_confirm", false, false, true},
+		{"assignment_release", false, false, true},
+		{"whoami", false, false, false},
+	} {
+		var dispatch, markers []string
+		host := httptest.NewServer(NewHandlerWithOptions(okStore{c.fail}, verifier, HandlerOptions{
+			Nudge:         func(w, p string) { markers = append(markers, w+"/"+p) },
+			NudgeDispatch: func(w, p string) { dispatch = append(dispatch, w+"/"+p) },
+		}))
+		req, _ := http.NewRequest(http.MethodPost, host.URL+"/v1/execute", bytes.NewBufferString(`{"operation":"`+c.op+`","workspace":"w","project":"p","session":"s","args":{}}`))
+		req.Header.Set("Authorization", "Bearer token")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		host.Close()
+		if (len(dispatch) == 1 && dispatch[0] == "w/p") != c.nudged || len(dispatch) > 1 || (len(markers) == 1) != c.markers || len(markers) > 1 {
+			t.Fatal(c, dispatch, markers)
+		}
+	}
+}
+
+// A proposal's nudge runs the dispatcher: a fallback pass.
+func TestNudgeDispatchRunsTheDispatcher(t *testing.T) {
+	p := &passes{}
+	n, _ := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	n.NudgeDispatch("w", "p1")
+	n.serve(context.Background())
+	if p.count() != 1 || p.pids[0] != "fallback:id-p1" {
+		t.Fatal("a proposal's nudge did not run the dispatcher:", p.pids)
+	}
+}
+
+// dueTimes is a fake bus answer for the nudger's due times.
+type dueTimes struct {
+	mu  sync.Mutex
+	due map[string]time.Time
+}
+
+func (d *dueTimes) set(m map[string]time.Time) {
+	d.mu.Lock()
+	d.due = m
+	d.mu.Unlock()
+}
+
+func (d *dueTimes) read(context.Context) (map[string]time.Time, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.due, nil
+}
+
+// An intake source due in two minutes, with a quarter-hour interval, gets a
+// webhook pass of its project then, not at the next tick: the wait follows
+// the due time, and the pass is a webhook pass only.
+func TestIntakeDueWakesAWebhookPass(t *testing.T) {
+	p := &passes{}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	d := &dueTimes{}
+	n.dueAt = d.read
+	start := *clock
+	d.set(map[string]time.Time{"id-p1": start.Add(2 * time.Minute)})
+	n.Ticked([]watcher.ProjectTick{{ProjectID: "id-p1"}})
+	if wait := n.serve(context.Background()); p.count() != 0 || wait != 2*time.Minute {
+		t.Fatal("not waiting for the due time:", wait, p.pids)
+	}
+	*clock = start.Add(119 * time.Second)
+	if n.serve(context.Background()); p.count() != 0 {
+		t.Fatal("ran before the due time:", p.pids)
+	}
+	// The pass reads the source and sets its next poll beyond the interval.
+	d.set(map[string]time.Time{})
+	*clock = start.Add(2 * time.Minute)
+	n.serve(context.Background())
+	if p.count() != 1 || p.pids[0] != "webhook:id-p1" {
+		t.Fatal("no webhook pass at the due time, or more than one:", p.pids)
+	}
+	// Nothing is due now: no extra pass, and the timer rests.
+	*clock = start.Add(10 * time.Minute)
+	if wait := n.serve(context.Background()); p.count() != 1 || wait != time.Hour {
+		t.Fatal("an extra pass:", wait, p.pids)
+	}
+}
+
+// Due times that come within a minute of the last pass make one pass a
+// minute, as every nudge does; another project is its own.
+func TestIntakeDueWakesRespectTheMinute(t *testing.T) {
+	p := &passes{}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	d := &dueTimes{}
+	n.dueAt = d.read
+	start := *clock
+	d.set(map[string]time.Time{"id-p1": start.Add(2 * time.Minute)})
+	n.Ticked([]watcher.ProjectTick{{ProjectID: "id-p1"}})
+	*clock = start.Add(2 * time.Minute)
+	// The pass leaves a second source due 30 seconds later.
+	d.set(map[string]time.Time{"id-p1": start.Add(2*time.Minute + 30*time.Second)})
+	n.serve(context.Background())
+	if p.count() != 1 {
+		t.Fatal(p.pids)
+	}
+	*clock = start.Add(2*time.Minute + 30*time.Second)
+	d.set(map[string]time.Time{})
+	if wait := n.serve(context.Background()); p.count() != 1 || wait != 30*time.Second {
+		t.Fatal("a second pass inside the minute:", wait, p.pids)
+	}
+	*clock = start.Add(3 * time.Minute)
+	n.serve(context.Background())
+	if p.count() != 2 || p.pids[1] != "webhook:id-p1" {
+		t.Fatal("the second due time was lost:", p.pids)
+	}
+}
+
+// A due wake never runs the dispatcher or the markers, and never
+// downgrades a fallback asked for.
+func TestIntakeDueWakeIsWebhookOnly(t *testing.T) {
+	p := &passes{}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	d := &dueTimes{}
+	n.dueAt = d.read
+	start := *clock
+	d.set(map[string]time.Time{"id-p1": start.Add(time.Minute), "id-p2": start.Add(time.Minute)})
+	n.Ticked([]watcher.ProjectTick{{ProjectID: "id-p1"}, {ProjectID: "id-p2"}})
+	n.NudgeProject("id-p2")
+	d.set(map[string]time.Time{})
+	*clock = start.Add(time.Minute)
+	n.serve(context.Background())
+	got := map[string]bool{}
+	for _, pid := range p.pids {
+		got[pid] = true
+	}
+	if len(p.pids) != 3 || !got["webhook:id-p1"] || !got["webhook:id-p2"] || !got["fallback:id-p2"] {
+		t.Fatal("passes:", p.pids)
+	}
+}
+
+// Each clock tick logs one line saying the watcher is healthy, with the
+// next intake due time; a tick with a failed project logs none.
+func TestTickLogsIdleLine(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	p := &passes{}
+	n, clock := testNudger(p, oneAtATime(&countTicks{ticks: make(chan struct{}, 8)}))
+	d := &dueTimes{}
+	n.dueAt = d.read
+	d.set(map[string]time.Time{"id-p1": clock.Add(2 * time.Minute), "id-p2": clock.Add(5 * time.Minute)})
+	ok := []watcher.ProjectTick{{ProjectID: "id-p1"}, {ProjectID: "id-p2"}}
+	n.Ticked(ok)
+	want := "watcher: tick: 2 project(s) ok, next intake due " + clock.Add(2*time.Minute).UTC().Format("15:04:05Z") + "\n"
+	if !strings.HasSuffix(buf.String(), want) || strings.Count(buf.String(), "watcher: tick:") != 1 {
+		t.Fatalf("log %q, want %q", buf.String(), want)
+	}
+	buf.Reset()
+	d.set(map[string]time.Time{})
+	n.Ticked(ok[:1])
+	if !strings.HasSuffix(buf.String(), "watcher: tick: 1 project(s) ok, next intake due none\n") {
+		t.Fatal(buf.String())
+	}
+	buf.Reset()
+	n.Ticked([]watcher.ProjectTick{{ProjectID: "id-p1"}, {ProjectID: "id-p2", Error: "unavailable"}})
+	if strings.Contains(buf.String(), "watcher: tick:") {
+		t.Fatal("an idle line for a failed tick:", buf.String())
 	}
 }

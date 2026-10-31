@@ -73,6 +73,9 @@
   decision whose reason contradicts the facts is recorded with the corrected reason. A model case opened just before the
   upgrade has no trust flag; a trusted reason on it is treated as contradictory, and the rules decide that claim on the
   next tick. No schema change. Linear config scope: none.
+- Intake re-checks a lagging Linear history about two minutes later, as intended, instead of at the next watcher tick; a
+  new claim reaches the dispatcher within about a minute. The watcher logs one line per tick so an idle watcher is
+  visibly healthy. No schema change. Linear config scope: none.
 
 ## Docs
 

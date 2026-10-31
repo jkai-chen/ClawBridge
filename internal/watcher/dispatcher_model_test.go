@@ -344,3 +344,23 @@ func TestModelCasesOnlyWhileLive(t *testing.T) {
 		t.Fatal("cases left open", open)
 	}
 }
+
+// In model mode a claim with no reported project is read through the text
+// query too, and its decide case opens on the app's facts.
+func TestModelCaseReadsTheProjectTheClientDidNotReport(t *testing.T) {
+	e := setup(t)
+	e.modelOn("eng")
+	issue := appIssue(issueA, projPay, "unstarted")
+	issue["title"], issue["description"] = "Fix the ledger", "Details."
+	e.f.dispatchIssues = map[string]any{issueA: issue}
+	e.propose("eng", issueA, "")
+	tick := e.tick()
+	if tick.Error != "" || tick.Dispatch == nil || tick.Dispatch.Reads != 1 || tick.Dispatch.Opened != 1 || e.assignmentState("eng") != "proposed" {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	var kind, source, project, domain string
+	e.queryRow(`SELECT kind,facts_source,app_project_id,domain FROM dispatcher_cases`, &kind, &source, &project, &domain)
+	if kind != "decide" || source != "app" || project != projPay || domain != "payments" {
+		t.Fatal(kind, source, project, domain)
+	}
+}

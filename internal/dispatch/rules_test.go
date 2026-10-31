@@ -3,6 +3,8 @@ package dispatch
 import (
 	"testing"
 	"time"
+
+	"clawbridge/internal/bus"
 )
 
 // Each row of the decision table, through the guardrails.
@@ -75,8 +77,43 @@ func TestNeedsRead(t *testing.T) {
 	}
 	for name, edit := range map[string]func(*Case){
 		"untrusted": func(c *Case) { c.Session.ID = "ses_other" },
-		"no domain": func(c *Case) { c.Issue.ProjectID = "" },
 		"stale":     func(c *Case) { c.Session.Presence = "stale" },
+		"retired":   func(c *Case) { c.Session.Status = "retired" },
+		"elsewhere": func(c *Case) { c.Issue.ProjectID = projPlat },
+	} {
+		cs := c
+		edit(&cs)
+		if NeedsRead(cs) {
+			t.Fatal(name, "spends a read")
+		}
+	}
+}
+
+// A claim whose client reported no project is read when some domain matches
+// by project: the app's read is the authority, and it may find one.
+func TestNeedsReadWithoutAClientProject(t *testing.T) {
+	c := confirmable()
+	c.Issue.ProjectID, c.Issue.Authoritative = "", false
+	if !NeedsRead(c) {
+		t.Fatal("an empty project with a project domain does not read")
+	}
+	// Trust is judged on the facts the read returns, not before it.
+	untrusted := c
+	untrusted.Session.ID = "ses_other"
+	if !NeedsRead(untrusted) {
+		t.Fatal("an untrusted session's empty project does not read")
+	}
+	labelsOnly := c
+	labelsOnly.Domains = []bus.DispatcherDomain{{ID: "labels", Match: bus.DispatcherMatch{Labels: []string{"payments"}}}}
+	if NeedsRead(labelsOnly) {
+		t.Fatal("label domains cannot grant, so they spend no read")
+	}
+	for name, edit := range map[string]func(*Case){
+		"stale":      func(c *Case) { c.Session.Presence = "stale" },
+		"retired":    func(c *Case) { c.Session.Status = "retired" },
+		"moved":      func(c *Case) { c.Session.Status = "moved" },
+		"no issue":   func(c *Case) { c.Issue.ID = "" },
+		"no domains": func(c *Case) { c.Domains = nil },
 	} {
 		cs := c
 		edit(&cs)

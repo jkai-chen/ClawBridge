@@ -180,7 +180,8 @@ Create, with the names recorded as you go:
   actually uses (`echo "$SSH_CONNECTION" | cut -d " " -f 4` on the host), never
   an assumed 22: blocking it locks you out of your own machine.
 - **A data disk:** a separate block volume mounted at
-  `/var/lib/clawbridge-postgres`, by UUID in `/etc/fstab`, as on the clouds.
+  `/var/lib/clawbridge-postgres`, by UUID in `/etc/fstab`, as on the clouds,
+  with at least 10 GiB free (the infra check refuses less: `data_disk_full`).
   Many small servers have none: then add `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` to the
   env file to keep the database on the root disk by your stated choice. The
   infra check then warns `data_on_root_disk` instead of failing, and a
@@ -266,6 +267,52 @@ The store's key is yours to enter, with `cloud secret set
 CLAWBRIDGE_BACKUP_ACCESS_KEY_ID --ssh admin@203.0.113.7` and the same for
 `CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY`. The backup uploads in the pinned aws-cli
 image, so the host needs no `aws` CLI.
+
+Also add, on your own server:
+- `COMPOSE_PROJECT_NAME=clawbridge`: every command in the
+  [deployment guide](deployment.md) reads the Compose project from it;
+- `CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data`, so the
+  database lives on the data disk (without it Compose keeps it in a Docker volume
+  on the root disk, and the backup refuses to run); with no data disk, set
+  `CLAWBRIDGE_DATA_ON_ROOT_DISK=1` instead.
+
+Then, on the host as root, run the same blocks the `clawbridge-provision-vm`
+playbook runs ([its commands](../../skills/clawbridge-provision-vm/references/commands.md)).
+
+**The disk guard** (a separate data volume only; skip it with
+`CLAWBRIDGE_DATA_ON_ROOT_DISK=1`, or Docker won't start at all). It makes Docker
+start only with the data volume mounted. Restarting Docker restarts every container
+on the host, so list them first with `docker ps -a`:
+
+```sh
+set -e
+src=/opt/clawbridge/repo/deploy/systemd/docker.service.d/10-clawbridge-postgres-mount.conf
+dst=/etc/systemd/system/docker.service.d/10-clawbridge-postgres-mount.conf
+if ! cmp -s "$src" "$dst"; then
+  install -d -o root -g root -m 0755 /etc/systemd/system/docker.service.d
+  install -o root -g root -m 0644 "$src" "$dst"
+  systemctl daemon-reload
+  systemctl restart docker
+fi
+systemctl is-active docker
+```
+
+**The stack and the daily backup timer** (02:30 UTC). It builds from the checkout;
+with `CLAWBRIDGE_IMAGE` in the env file, add `-f /opt/clawbridge/repo/deploy/compose.image.yaml`
+to pull the release's image instead:
+
+```sh
+set -e
+mkdir -p /var/lib/clawbridge-postgres/data
+docker compose --env-file /etc/clawbridge/clawbridge.env --project-name clawbridge \
+  -f /opt/clawbridge/repo/deploy/compose.yaml up -d --build
+install -d -o root -g root -m 0755 /usr/local/libexec/clawbridge
+install -o root -g root -m 0755 /opt/clawbridge/repo/deploy/backup-postgres.sh /usr/local/libexec/clawbridge/backup-postgres.sh
+install -o root -g root -m 0644 /opt/clawbridge/repo/deploy/systemd/clawbridge-postgres-backup.service \
+  /opt/clawbridge/repo/deploy/systemd/clawbridge-postgres-backup.timer /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now clawbridge-postgres-backup.timer
+systemctl start clawbridge-postgres-backup.service   # the first backup, for the backups check
+```
 
 Done when:
 

@@ -165,6 +165,11 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   (`· N info`) only when there are some, and the setup wizard's summary leaves them out. Flags given for an entry
   that's absent, or an agent set up without the skill, still warn. docs/usage.md. No schema change. Linear config
   scope: none.
+- **A hosted profile's first project becomes its default, as a local one's does.** After an owner joins a new server
+  and runs `clawbridge project create NAME`, that project is the profile's default when it has none (a default
+  already set is never replaced), so `whoami` needs no `--project` and `clawbridge cloud check workspace`, the first
+  deployment's check after creating the project, passes. Its `no_workspace` advice now says to create the first
+  project or set `CLAWBRIDGE_PROJECT`, not to run `setup --cloud`. Linear config scope: none.
 
 ## Operations
 

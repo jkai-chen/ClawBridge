@@ -308,18 +308,30 @@ func resolveConfigVariant(ctx context.Context, flags Config, variant func(Config
 	return base, path, nil
 }
 
-// writeDefaultProject saves project as the local profile's default: always
-// when replace, otherwise only when it has none. It keeps every other key.
-func writeDefaultProject(path, project string, replace bool) error {
+// writeDefaultProject saves project as the default of the profile file at
+// path, local or cloud: always when replace, otherwise only when it has none.
+// It keeps every other key, a cloud profile's device credential included. It
+// writes nothing when there is no file (a profile set only by the
+// environment, such as a CI device's) or when the file is for another mode
+// than mode, the one in effect (a file without one is local), so a hosted
+// project never lands in a local profile.
+func writeDefaultProject(path, mode, project string, replace bool) error {
 	values := map[string]any{}
 	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	if err = toml.Unmarshal(b, &values); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
-	if mode, _ := values["mode"].(string); mode != "" && mode != "local" {
+	fileMode, _ := values["mode"].(string)
+	if fileMode == "" {
+		fileMode = "local"
+	}
+	if fileMode != mode || (mode != "local" && mode != "cloud") {
 		return nil
 	}
 	if current, _ := values["project"].(string); current != "" && !replace {

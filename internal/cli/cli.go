@@ -1315,17 +1315,18 @@ flags:`)
 		// The global --project, given to setup --local, is saved as the
 		// default project; project create makes it.
 		if p := flags.Project; p != "" && config.Mode == "local" {
-			if err = writeDefaultProject(configPath, p, true); err != nil {
+			if err = writeDefaultProject(configPath, config.Mode, p, true); err != nil {
 				return fmt.Errorf("workspace initialized but config write failed: %w", err)
 			}
 		}
 	}
-	// A local workspace's first project becomes its default, so a new
-	// terminal needs no --project. One tied to a git remote resolves by the
+	// A profile's first project becomes its default, local or hosted, so a
+	// new terminal (and cloud check workspace) needs no --project; an existing
+	// default is never replaced. One tied to a git remote resolves by the
 	// remote instead, in its checkout.
-	if op == "project_create" && config.Mode == "local" && a["git_remote"] == nil {
+	if op == "project_create" && (config.Mode == "local" || config.Mode == "cloud") && a["git_remote"] == nil {
 		if slug, _ := a["slug"].(string); slug != "" {
-			if err = writeDefaultProject(configPath, slug, false); err != nil {
+			if err = writeDefaultProject(configPath, config.Mode, slug, false); err != nil {
 				return fmt.Errorf("project created but config write failed: %w", err)
 			}
 		}

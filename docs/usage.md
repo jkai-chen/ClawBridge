@@ -418,7 +418,14 @@ PASS Authority health: Your workspace answers.
 
 A check can also be `info` (`NOTE` at a terminal): a note, not a problem, such as
 `mcp.entries` and `skill.version` on a machine with no Claude Code or Codex set up.
-The counts add `· N info` only when there are notes.
+The counts add `· N info` only when there are notes. An agent folder that exists
+but is empty, such as a `~/.claude` an installer made, counts as no agent set up.
+
+On a machine where ClawBridge was never set up (no profile file, and no route from
+the environment or a flag), `doctor` gives one failure, `setup.none`, in place of the
+settings, workspace and project checks: "ClawBridge isn't set up on this machine yet:
+run clawbridge to start (or clawbridge join with an invite)". It creates no database,
+and exits 1. A profile of any kind, even a half-written one, gets the usual checks.
 
 It exits 1 when a check fails and 0 otherwise, warnings and notes included. With `--json`
 (and on a pipe, or in an agent's shell) the report is the JSON it always was:

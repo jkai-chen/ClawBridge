@@ -1,3 +1,9 @@
+# Unreleased
+
+## Fixes
+
+- Intake re-checks a lagging Linear history about two minutes later, as intended, instead of at the next watcher tick; a new claim reaches the dispatcher within about a minute. The watcher logs one line per tick so an idle watcher is visibly healthy.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

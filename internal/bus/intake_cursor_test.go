@@ -81,3 +81,57 @@ func TestIntakeCursorSoon(t *testing.T) {
 		t.Fatal("a non-intake source was accepted")
 	}
 }
+
+// IntakeDueAt lists, per project, the earliest active intake source due
+// after now and inside the window; it skips other sources, closed cursors,
+// sources already due and sources past the window.
+func TestIntakeDueAt(t *testing.T) {
+	h := newHarness(t)
+	var pid string
+	if err := h.s.db.QueryRow(`SELECT id FROM projects`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	checkIntakeDueAt(t, h.s, pid)
+}
+
+// checkIntakeDueAt is TestIntakeDueAt's body, shared with the Postgres run.
+func checkIntakeDueAt(t *testing.T, s *Store, pid string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	put := func(source, subject string, due time.Time, closed bool) {
+		t.Helper()
+		until := any(nil)
+		if closed {
+			until = layout(now.Add(time.Hour))
+		}
+		tx, err := s.beginIntake(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO watch_cursors(project_id,source,subject,cursor_time,watch_started_at,active_until,next_poll_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, pid, source, subject, layout(now), layout(now), until, layout(due), layout(now)); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("intake-s1", "late", now.Add(8*time.Minute), false)
+	put("intake-s1", "early", now.Add(3*time.Minute), false)
+	put("intake-s2", "same-project", now.Add(5*time.Minute), false)
+	put("intake-s1", "closed", now.Add(time.Minute), true)
+	put("intake-s1", "overdue", now.Add(-time.Minute), false)
+	put("intake-s1", "far", now.Add(20*time.Minute), false)
+	put("comments", "issue", now.Add(time.Minute), false)
+	got, err := s.IntakeDueAt(ctx, 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || layout(got[pid]) != layout(now.Add(3*time.Minute)) {
+		t.Fatal("not the earliest of the project:", got, now.Add(3*time.Minute))
+	}
+	if got, err = s.IntakeDueAt(ctx, time.Minute); err != nil || len(got) != 0 {
+		t.Fatal("a source past the window:", got, err)
+	}
+}

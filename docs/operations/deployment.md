@@ -789,6 +789,12 @@ CLAWBRIDGE_WATCH_INTERVAL=15m
   keeps its own polling schedule, and a tick with nothing due calls nothing. An
   intake source is next due 5 or 15 minutes after its read started, and a tick up
   to 30 s early still polls it.
+  An intake source due sooner than the next tick (a candidate whose Linear
+  history lags is read again about 2 minutes later) wakes its project's
+  intake pass at that time, at most once a minute per project, and a proposed
+  claim wakes the dispatcher within the minute. Each tick logs `watcher: tick: N
+  project(s) ok, next intake due HH:MM:SSZ`, so an idle watcher is visibly healthy;
+  the line is absent when a tick fails, so look for the tick's `failed` line instead.
   - **An opt-in cap:** `CLAWBRIDGE_LINEAR_BUDGET`, 1 to 600, caps every project
     (anything else refuses to start). `CLAWBRIDGE_WATCH_BUDGET` is its old,
     deprecated name: **a server upgraded with `CLAWBRIDGE_WATCH_BUDGET=300` (or

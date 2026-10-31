@@ -208,9 +208,12 @@ func startWatcher(ctx context.Context, store *bus.Store, w watchSettings, opts H
 		// marker pass left rows hands them to the nudges.
 		if markers, ok := built.(markerPasser); ok && store != nil {
 			n := newNudger(ticker, markers, store.WatchProjectID)
+			n.dueAt = func(ctx context.Context) (map[string]time.Time, error) {
+				return store.IntakeDueAt(ctx, w.interval)
+			}
 			ticker.after = n.Ticked
 			go n.run(ctx)
-			opts.Nudge, opts.NudgeProject = n.Nudge, n.NudgeProject
+			opts.Nudge, opts.NudgeDispatch, opts.NudgeProject = n.Nudge, n.NudgeDispatch, n.NudgeProject
 			// A verified delivery's projects get a webhook pass (FR14).
 			if opts.Webhook != nil {
 				opts.Webhook.Nudge = n.NudgeWebhook

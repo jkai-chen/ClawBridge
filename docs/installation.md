@@ -172,11 +172,13 @@ cache and native credentials, signs in to nothing, and needs no profile.
 clawbridge self-update --check     # reports the running and latest versions; changes nothing
 clawbridge self-update             # upgrade to the latest release
 clawbridge self-update --version vX.Y.Z
+clawbridge self-update --rollback  # put back the binary the last update replaced
 ```
 
 - **`--check`** prints the plan as JSON and one line on stderr: an update is available,
   you are up to date, the latest is older than the running version, or this is a
   development build. It exits 0 for all four and reads only the latest-release redirect.
+  When a rollback is available it also says to which version (`rollback` in the JSON).
 - **Downgrades.** The command never installs an older release by itself. Naming one with
   `--version vX.Y.Z` is the explicit consent; without it, a latest release older than the
   running version is refused. A development build must name its release with `--version`.
@@ -215,6 +217,25 @@ clawbridge self-update --version vX.Y.Z
   same volume, otherwise beside the binary) and the new one takes its name; if the second
   rename fails, the first is undone. The old file stays while any `clawbridge` process
   still runs it, and later runs delete the leftovers.
+- **Rollback.** Each update keeps the binary it replaces in one slot,
+  `~/.clawbridge/previous/` (`$CLAWBRIDGE_HOME/previous/` when that is set): the file
+  `clawbridge-vX.Y.Z` (`.exe` on Windows) and `previous.json` with its version and SHA-256.
+  Only the last replaced binary is kept. On macOS and Linux it is a hard link when the slot
+  is on the binary's volume, otherwise a copy; on Windows it is a copy of the renamed-aside
+  file. If it can't be kept (a development build, a full disk), the update still goes ahead
+  and says `rollback isn't available`, and the slot is emptied.
+  - **`clawbridge self-update --rollback`** checks the kept file against the recorded
+    SHA-256, runs its `version`, which must report the recorded version, and swaps it in
+    the way an update does (the rename aside on Windows). With no slot, a mismatch or a
+    failing `version`, it changes nothing. Afterwards it reinstalls the skill with the
+    rolled-back binary (`--no-skill` skips it).
+  - **The slot after a rollback** holds the version you rolled back from, so a second
+    `--rollback` undoes the first.
+  - **Holding the version.** The version you rolled back from is written as `hold_version`
+    in `~/.clawbridge/auto-update.json`, so automatic updates, when they come, won't put
+    it back.
+  - **A person's command.** It refuses whenever an agent's environment is set, at a
+    terminal too: an agent can't roll back your upgrade.
 - **Running agents.** An agent's running MCP server (`clawbridge mcp`) keeps the old
   version until its session restarts. When you use a hosted server, the command also says
   if the server runs an older release than the client now does; `clawbridge doctor`

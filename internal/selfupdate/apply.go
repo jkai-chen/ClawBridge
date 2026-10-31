@@ -22,13 +22,15 @@ const (
 	stagePattern  = ".clawbridge-update-*"
 )
 
-// The file-system seams: tests fail a rename, act as Windows on any OS, or
-// put the temp directory on another volume.
+// The file-system seams: tests fail a rename, act as Windows on any OS, put
+// the temp directory on another volume, or fail the rollback slot's hard
+// link.
 var (
 	rename     = os.Rename
 	hostOS     = runtime.GOOS
 	volumeName = filepath.VolumeName
 	asideID    = randomHex
+	linkFile   = os.Link
 )
 
 func randomHex() string {
@@ -121,27 +123,64 @@ func apply(ctx context.Context, p Plan, o Options) (Result, error) {
 	if err := os.Chmod(staged, 0o755); err != nil {
 		return Result{}, err
 	}
-	if err := smoke(ctx, o, staged, p.Target); err != nil {
+	if err := smoke(ctx, o, staged, p.Target, "the downloaded binary"); err != nil {
 		return Result{}, err
 	}
 
-	// 6. Replace in place.
+	// 6. Replace in place, keeping the replaced binary for --rollback; on
+	// Windows, sweep the old binaries of earlier updates.
+	sw, err := swapIn(o, staged, dest, p.Current)
+	if err != nil {
+		return Result{}, err
+	}
+	installed = true
+	res.Aside, res.Swept, res.Previous, res.PreviousWarning = sw.aside, sw.swept, sw.kept, sw.warning
+	return res, nil
+}
+
+// swapped is what swapIn did.
+type swapped struct {
+	aside   string
+	swept   int
+	kept    string
+	warning string
+}
+
+// swapIn puts staged in dest's place and keeps the binary it replaces,
+// which runs as version replaced, in o.PreviousDir's slot. On Unix the slot
+// takes a hard link (or a copy) of dest before the rename; on Windows,
+// a copy of the set-aside file after the swap, before the sweep. Failing to
+// keep it only warns: the swap stands. An error means dest is unchanged
+// (or, on Windows, names where the old binary is).
+func swapIn(o Options, staged, dest, replaced string) (swapped, error) {
+	var sw swapped
 	if hostOS == "windows" {
 		aside := asidePath(o.TempDir, dest)
 		if err := replaceWindows(staged, dest, aside); err != nil {
-			return Result{}, err
+			return sw, err
 		}
-		installed = true
-		res.Aside = aside
-		// 7. Sweep the old binaries of earlier updates.
-		res.Swept = sweep(o.TempDir, filepath.Dir(dest), aside)
-		return res, nil
+		sw.aside = aside
+		slot, err := o.prepareSlot(aside, replaced, false)
+		sw.kept, sw.warning = keepSlot(o.PreviousDir, slot, err)
+		sw.swept = sweep(o.TempDir, filepath.Dir(dest), aside)
+		return sw, nil
 	}
+	slot, slotErr := o.prepareSlot(dest, replaced, true)
 	if err := rename(staged, dest); err != nil {
-		return Result{}, fmt.Errorf("nothing was changed; install %s: %w", dest, err)
+		slot.discard()
+		return sw, fmt.Errorf("nothing was changed; install %s: %w", dest, err)
 	}
-	installed = true
-	return res, nil
+	sw.kept, sw.warning = keepSlot(o.PreviousDir, slot, slotErr)
+	return sw, nil
+}
+
+// prepareSlot is the package's prepareSlot in o.PreviousDir; nothing when
+// it is "".
+func (o Options) prepareSlot(src, version string, link bool) (*pendingSlot, error) {
+	if o.PreviousDir == "" {
+		return nil, nil
+	}
+	return prepareSlot(o.PreviousDir, src, version, link)
 }
 
 func fetchDigest(ctx context.Context, o Options, url, asset string) (string, error) {
@@ -237,12 +276,14 @@ func attest(ctx context.Context, o Options, staged, version string) error {
 	return nil
 }
 
-func smoke(ctx context.Context, o Options, staged, version string) error {
+// smoke runs the staged binary's version, which must report version; what
+// names the binary in the error.
+func smoke(ctx context.Context, o Options, staged, version, what string) error {
 	ctx, cancel := context.WithTimeout(ctx, smokeTimeout)
 	defer cancel()
 	out, err := o.Run(ctx, staged, "version")
 	if err != nil || !strings.Contains(string(out), `"version":"`+version+`"`) {
-		return fmt.Errorf("the downloaded binary doesn't report %s; nothing was changed", version)
+		return fmt.Errorf("%s doesn't report %s; nothing was changed", what, version)
 	}
 	return nil
 }

@@ -262,6 +262,8 @@ project.
 
 Run `clawbridge self-update --check` to see whether an update exists and tell your human. Never upgrade ClawBridge yourself: `clawbridge self-update` is a person's decision, and it refuses in an agent's shell.
 
+The same goes for going back. `clawbridge self-update --rollback` puts back the binary the last update replaced, and only a person runs it: it refuses whenever an agent's environment is set, even at a terminal. If an update broke something, tell your human; `--check` shows whether a rollback is available and to which version.
+
 ## Notification and host capabilities
 
 Check installed command help before using source-only additions. On matching

@@ -1,3 +1,14 @@
+# Unreleased
+
+## Install and upgrade
+
+- **`clawbridge self-update --rollback` puts back the binary the last update replaced.** Each update now keeps the
+  binary it replaces in `~/.clawbridge/previous/`, with its SHA-256 and version; the rollback checks both before it
+  swaps the binary back, then reinstalls the skill. The version you rolled back from is held in `auto-update.json`, and
+  a second `--rollback` undoes the first. It's a person's command: refused under an agent's environment, even at a
+  terminal. If the slot can't be kept, the update still goes ahead and says so. `self-update --check` says whether a
+  rollback is available.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

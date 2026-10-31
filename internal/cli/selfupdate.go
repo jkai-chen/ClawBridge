@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,8 +25,9 @@ import (
 // package, the new binary's runner and the server's version are seams so
 // tests make no request and run no binary.
 var (
-	selfUpdatePlan  = selfupdate.PlanUpdate
-	selfUpdateApply = selfupdate.Apply
+	selfUpdatePlan     = selfupdate.PlanUpdate
+	selfUpdateApply    = selfupdate.Apply
+	selfUpdateRollback = selfupdate.Rollback
 	// selfUpdateSkill runs the new binary's `skill install`.
 	selfUpdateSkill = func(ctx context.Context, binary string, stderr io.Writer) error {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -41,7 +43,41 @@ var (
 
 var releaseTag = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
-const selfUpdateUsage = "usage: clawbridge self-update [--check] [--version vX.Y.Z] [--verify-attestation] [--no-skill]  (alias: upgrade)"
+const selfUpdateUsage = "usage: clawbridge self-update [--check] [--version vX.Y.Z] [--verify-attestation] [--no-skill], or clawbridge self-update --rollback [--no-skill]  (alias: upgrade)"
+
+// previousDir is the rollback slot, and autoUpdatePath the automatic-update
+// state (FR24 §1 and §5), both in the client's state home beside
+// config.toml.
+func previousDir() (string, error) {
+	home, err := stateHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, selfupdate.PreviousDirName), nil
+}
+
+func autoUpdatePath() (string, error) {
+	home, err := stateHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, selfupdate.AutoUpdateFile), nil
+}
+
+// rollbackVersion is the version `self-update --rollback` would restore:
+// the kept binary when its SHA-256 matches and it isn't the running
+// version; "" otherwise.
+func rollbackVersion() string {
+	dir, err := previousDir()
+	if err != nil {
+		return ""
+	}
+	prev, err := selfupdate.CheckPrevious(dir)
+	if err != nil || prev.Version == buildinfo.Version {
+		return ""
+	}
+	return prev.Version
+}
 
 // versionOlder reports whether canonical release a is older than b; false
 // when either is not a canonical vX.Y.Z (a development build).
@@ -107,6 +143,7 @@ func runSelfUpdate(ctx context.Context, args []string, stdout, stderr io.Writer)
 	version := f.String("version", "", "install this release (vX.Y.Z); the only way to go to an older one")
 	verify := f.Bool("verify-attestation", false, "check the build provenance (the release's Sigstore bundle, or gh before v0.3.13); install nothing if it fails")
 	noSkill := f.Bool("no-skill", false, "do not re-run skill install afterwards")
+	rollback := f.Bool("rollback", false, "put back the binary the last update replaced (a person's command)")
 	f.Bool("json", true, "return JSON (the default output format)")
 	if err := f.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -116,6 +153,12 @@ func runSelfUpdate(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	if f.NArg() != 0 {
 		return errors.New(selfUpdateUsage)
+	}
+	if *rollback {
+		if *check || *version != "" || *verify {
+			return errors.New("--rollback takes only --no-skill")
+		}
+		return runSelfUpdateRollback(ctx, *noSkill, stdout, stderr)
 	}
 	if *version != "" && !releaseTag.MatchString(*version) {
 		return fmt.Errorf("--version must be a release tag such as v1.2.3, not %q", *version)
@@ -133,16 +176,22 @@ func runSelfUpdate(ctx context.Context, args []string, stdout, stderr io.Writer)
 			return fmt.Errorf("upgrading ClawBridge is a person's decision, and %s says an agent runs this command; tell your human to run `clawbridge self-update` in their terminal", marker)
 		}
 	}
-	opts := selfupdate.Options{Current: buildinfo.Version, Version: *version, Attest: *verify}
+	// Without a state home the update still runs; it keeps no rollback.
+	slot, _ := previousDir()
+	opts := selfupdate.Options{Current: buildinfo.Version, Version: *version, Attest: *verify, PreviousDir: slot}
 	plan, err := selfUpdatePlan(ctx, opts)
 	if err != nil {
 		return err
 	}
 	if *check {
+		plan.Rollback = rollbackVersion()
 		if err := emit(ctx, stdout, "self_update_check", selfUpdateOutput{Source: "self_update_check", Data: plan}); err != nil {
 			return err
 		}
 		fmt.Fprintln(stderr, planLine(plan, true))
+		if plan.Rollback != "" {
+			fmt.Fprintf(stderr, "rollback available: clawbridge self-update --rollback restores %s\n", plan.Rollback)
+		}
 		return nil
 	}
 	if plan.Action != selfupdate.Update {
@@ -188,13 +237,75 @@ func runSelfUpdate(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if result.Aside != "" {
 		fmt.Fprintf(stderr, "the old binary is at %s until running clawbridge processes exit\n", result.Aside)
 	}
+	switch {
+	case result.Previous != "":
+		fmt.Fprintf(stderr, "%s is kept: clawbridge self-update --rollback puts it back\n", result.Previous)
+	case result.PreviousWarning != "":
+		fmt.Fprintln(stderr, result.PreviousWarning)
+	}
 	if !*noSkill {
-		if err := selfUpdateSkill(ctx, result.Destination, stderr); err != nil {
-			fmt.Fprintln(stderr, "the agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.")
-		}
+		reinstallSkill(ctx, result.Destination, stderr)
 	}
 	if server := selfUpdateServerVersion(ctx); versionOlder(server, result.To) {
 		fmt.Fprintf(stderr, "your server runs %s; the client is now %s; see clawbridge doctor\n", server, result.To)
+	}
+	fmt.Fprintln(stderr, "agents' running MCP servers (clawbridge mcp) keep the old version until their session restarts")
+	return nil
+}
+
+// reinstallSkill runs binary's `skill install`; a failure only warns.
+func reinstallSkill(ctx context.Context, binary string, stderr io.Writer) {
+	if err := selfUpdateSkill(ctx, binary, stderr); err != nil {
+		fmt.Fprintln(stderr, "the agent skill was not installed; run `clawbridge skill install --agent claude-code|codex|all` later.")
+	}
+}
+
+// runSelfUpdateRollback is `self-update --rollback` (FR24 §5): the binary
+// the last update replaced goes back in place. It is a person's command:
+// refused under any agent's environment, at a terminal too, since an agent
+// must not undo a person's upgrade. The version rolled back from is held in
+// auto-update.json, so automatic updates don't reinstall it.
+func runSelfUpdateRollback(ctx context.Context, noSkill bool, stdout, stderr io.Writer) error {
+	if marker := agentMarker(closesEnv()); marker != "" {
+		return fmt.Errorf("rolling ClawBridge back is a person's decision, and %s says an agent runs this command; nothing was changed. Tell your human to run `clawbridge self-update --rollback` in their terminal", marker)
+	}
+	dir, err := previousDir()
+	if err != nil {
+		return fmt.Errorf("nothing was changed; find the rollback slot: %w", err)
+	}
+	result, err := selfUpdateRollback(ctx, selfupdate.Options{Current: buildinfo.Version, PreviousDir: dir})
+	if err != nil {
+		return err
+	}
+	var holdErr error
+	if !releaseTag.MatchString(result.From) {
+		holdErr = errors.New("the running version is a development build")
+	} else if path, err := autoUpdatePath(); err != nil {
+		holdErr = err
+	} else if holdErr = selfupdate.SetHoldVersion(path, result.From); holdErr == nil {
+		result.HoldVersion = result.From
+	}
+	if err := emit(ctx, stdout, "self_update_rollback", selfUpdateOutput{Source: "self_update_rollback", Data: result}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stderr, "rolled back %s → %s at %s\n", result.From, result.To, result.Destination)
+	fmt.Fprintf(stderr, "sha256 %s (matches the one recorded when it was kept)\n", result.SHA256)
+	if result.Aside != "" {
+		fmt.Fprintf(stderr, "the replaced binary is at %s until running clawbridge processes exit\n", result.Aside)
+	}
+	if holdErr != nil {
+		fmt.Fprintf(stderr, "%s was not held in %s (%v)\n", result.From, selfupdate.AutoUpdateFile, holdErr)
+	} else {
+		fmt.Fprintf(stderr, "%s is held: automatic updates won't reinstall it\n", result.From)
+	}
+	switch {
+	case result.Previous != "":
+		fmt.Fprintf(stderr, "%s is kept: clawbridge self-update --rollback again puts it back\n", result.Previous)
+	case result.PreviousWarning != "":
+		fmt.Fprintln(stderr, result.PreviousWarning)
+	}
+	if !noSkill {
+		reinstallSkill(ctx, result.Destination, stderr)
 	}
 	fmt.Fprintln(stderr, "agents' running MCP servers (clawbridge mcp) keep the old version until their session restarts")
 	return nil

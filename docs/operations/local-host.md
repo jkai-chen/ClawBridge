@@ -14,6 +14,10 @@ It's for:
 If your team works from different places, or needs the server up while this machine
 sleeps, use a cloud server instead: [First deployment](first-deployment.md).
 
+With Claude Code or Codex installed, `clawbridge onboard` ("Set up my own server" → "This machine or my LAN")
+hands these steps to your agent with the `clawbridge-provision-local` playbook (`clawbridge skill install
+--playbook local`); you approve each command. This page is the same route done by hand.
+
 ## The two shapes
 
 | | Shape A, this machine only (`solo`, the default) | Shape B, your local network (`lan`) |
@@ -79,7 +83,7 @@ It asks for the code without showing it. Type it yourself.
 - **The code is a secret,** so it goes only to a terminal. Run from a pipe, a script or an agent, `up` skips it
   and tells you to run `deploy/local-host.sh invite-owner` in your own terminal. Use the same command if the code
   expires (24 hours) before the owner joins.
-- **Only once.** A later `up` finds the workspace the owner already owns and makes no new code; it says so.
+- **Only once.** A later `up` makes no new code (it says so when it finds the owner's workspace).
   `invite-owner` always makes one, which is also how an owner who lost every device gets back in. A new owner
   code revokes any earlier one still pending, so only the newest works.
 - **No proxy, so no forwarded headers.** Shape A trusts no peer's `X-Forwarded-For` or `X-Forwarded-Proto`
@@ -118,7 +122,8 @@ deploy/local-host.sh trust
   [Trusting the certificate](#trusting-the-certificate).
 - **Then each person joins** with `clawbridge join --server https://clawbridge.lan --email EMAIL`.
 
-The client trusts only the OS's certificate store. There is no option to pin a certificate or name a CA file.
+The client trusts the OS's certificate store. ClawBridge has no option of its own to pin a certificate or name a
+CA file.
 
 ### B2: mkcert
 
@@ -130,7 +135,8 @@ deploy/local-host.sh up --owner owner@example.test --lan clawbridge.lan --bind 1
   --cert clawbridge.lan.pem --key clawbridge.lan-key.pem
 ```
 
-Then trust mkcert's root (`mkcert -CAROOT` shows where it is) on each computer with the commands below.
+Then trust mkcert's root on each computer: copy `$(mkcert -CAROOT)/rootCA.pem` as `clawbridge-local-root.crt`
+(Debian and Ubuntu read only `.crt` files there), then use the commands below.
 
 ### B3: Tailscale
 
@@ -178,13 +184,13 @@ the root's name and SHA-1 thumbprint; for Caddy's, the name is `Caddy Local Auth
 
 | Where the client runs | Command |
 |---|---|
-| macOS | `sudo security remove-trusted-cert -d clawbridge-local-root.crt`, then `security delete-certificate -Z SHA1 ~/Library/Keychains/login.keychain-db` (or by name: `security delete-certificate -c "Caddy Local Authority - 2026 ECC Root" ~/Library/Keychains/login.keychain-db`) |
+| macOS | `sudo security remove-trusted-cert -d clawbridge-local-root.crt`, then `security delete-certificate -Z SHA1 ~/Library/Keychains/login.keychain-db` (or by name: `security delete-certificate -c "Caddy Local Authority - YEAR ECC Root" ~/Library/Keychains/login.keychain-db`) |
 | Debian, Ubuntu | `sudo rm /usr/local/share/ca-certificates/clawbridge-local-root.crt && sudo update-ca-certificates --fresh` |
 | Fedora, RHEL | `sudo rm /etc/pki/ca-trust/source/anchors/clawbridge-local-root.crt && sudo update-ca-trust` |
-| Windows | `certutil -user -delstore Root "Caddy Local Authority - 2026 ECC Root"` (or the serial number), or in PowerShell `Remove-Item Cert:\CurrentUser\Root\THUMBPRINT` |
+| Windows | `certutil -user -delstore Root "Caddy Local Authority - YEAR ECC Root"` (or the serial number), or in PowerShell `Remove-Item Cert:\CurrentUser\Root\THUMBPRINT` |
 
-On macOS, `trust` set the trust in the admin domain (`-d`), so the first command removes it from the same
-domain (it asks for your password) before the second deletes the certificate. `remove-trusted-cert` reads the
+On macOS, the `add-trusted-cert -d` command `trust` printed set the trust in the admin domain, so the first command
+removes it from the same domain (it asks for your password) before the second deletes the certificate. `remove-trusted-cert` reads the
 certificate file: keep `clawbridge-local-root.crt`, or run `deploy/local-host.sh trust` again to get it back.
 
 ### Firewalls
@@ -197,9 +203,11 @@ certificate file: keep `clawbridge-local-root.crt`, or run `deploy/local-host.sh
 
 ## Inviting colleagues
 
-Once the owner has joined, they invite each person from their own computer:
+Once the owner has joined, they create a project (a new server has a workspace but none) and invite each person
+to it from their own computer:
 
 ```sh
+clawbridge project create api
 clawbridge invite --email ada@example.test --grant api=member
 ```
 
@@ -364,15 +372,15 @@ run it inside WSL. The [`cloud check` reference](../reference/api.md) lists ever
 ## Upgrades
 
 ```sh
-git pull
+git fetch --depth 1 origin tag vX.Y.Z && git checkout vX.Y.Z   # a release tag checkout; on a branch, git pull
 deploy/local-host.sh backup
 deploy/local-host.sh up
 ```
 
 `up` rebuilds the image from the checkout and restarts what changed; the env file and the data stay. A new
 release may migrate the database on its first start, one way only (the release notes say so), which is why the
-backup comes first. Once ClawBridge publishes a server image, a later version of this script will pull it
-instead of building.
+backup comes first. The script builds from the checkout; it doesn't yet use the published release image
+(`deploy/compose.image.yaml`).
 
 ## What needs a public URL
 
@@ -380,7 +388,9 @@ Nothing in either shape needs an inbound public address. Some things need more t
 - **Colleagues off your network** need a tunnel to it, which is optional and up to you: Tailscale (B3 above), or
   Cloudflare Tunnel with a domain of your own. ClawBridge sets up neither.
 - **Linear works on a LAN.** The server's watcher polls Linear (outbound only), and the Linear app's callback
-  page (`ORIGIN/linear/callback`) only has to open in the browser of the person installing the app. Linear
+  page (`ORIGIN/linear/callback`) only has to open in the browser of the person installing the app. To turn the
+  app on, add its client ID and secret to `clawbridge.env` ([the Linear app](deployment.md#the-clawbridge-linear-app-optional)),
+  then run `up`. Linear
   webhooks need a public https URL Linear can reach ([deployment](deployment.md#linear-webhooks-optional)), so
   a LAN-only server can't receive them; polling still works, on its usual cadence.
 - **Dispatcher agents (agentd)** reach the server through an egress proxy that allows public addresses only,

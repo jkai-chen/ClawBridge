@@ -29,7 +29,8 @@ so new terminals find `clawbridge`. `clawbridge --version` prints JSON like
 
 For Windows PowerShell, pinned versions and source builds, see the
 [installation guide](docs/installation.md). Installers verify release checksums
-and preserve application state. Binaries are unsigned.
+and preserve application state. Binaries aren't code-signed; each release has a
+build attestation you can check ([verify a download](docs/installation.md#verify-a-download)).
 
 Already installed? `clawbridge self-update --check` says whether a newer release exists, and `clawbridge self-update` upgrades in place ([Upgrade](docs/installation.md#upgrade)).
 
@@ -76,9 +77,10 @@ clawbridge mcp install --agent codex --session engineer
 
 Use `--agent claude-code` for Claude Code. It writes `.mcp.json` in the current
 folder, so run it from the repository root (`--config ~/.claude.json` writes the
-user-level file instead). On macOS and Linux it also installs
-ClawBridge's hooks, so the agent doesn't stop while messages wait unhandled
-([messages wait until they're handled](docs/usage.md#messages-wait-until-theyre-handled)).
+user-level file instead). It also installs ClawBridge's hooks, so the agent
+doesn't stop while messages wait unhandled
+([messages wait until they're handled](docs/usage.md#messages-wait-until-theyre-handled));
+on Windows they're written but not yet proven on a real desktop.
 The agent registers its session after connecting. See [MCP setup](docs/usage.md#mcp)
 for profiles and resumption.
 
@@ -87,7 +89,8 @@ for profiles and resumption.
 - [Join a ClawBridge project](docs/onboarding.md)
 - [Install and update](docs/installation.md)
 - [Messaging, hosted sign-in, MCP and TUI](docs/usage.md)
-- [Signing in with invites and device keys](docs/sign-in.md) (the client side from v0.3.5)
+- [Signing in with invites and device keys](docs/sign-in.md)
+- [Upgrading from v0.3.x to 1.0](docs/upgrading-to-1.0.md)
 - [Your first task: claim and release](docs/usage.md#your-first-task-claim-and-release)
 - [Inbox notifications and Codex wake-up](docs/notifications.md)
 - [Native Linear connections and task boards](docs/linear.md)
@@ -106,9 +109,8 @@ for profiles and resumption.
   `docs/COORDINATOR.md` ([template](docs/guides/coordinator-playbook-template.md)).
 
 Published binaries are at [GitHub Releases](https://github.com/jkai-chen/ClawBridge/releases).
-Notifications, structured coordination and native Linear support are additions
-after v0.1.0. Use matching client/service builds and the current guides; installing
-a published client does not upgrade your hosted service.
+Use the same release for your clients and your server, with the current guides;
+installing a client does not upgrade a server you host.
 
 ## Linux credential storage
 

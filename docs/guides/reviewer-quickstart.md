@@ -37,8 +37,9 @@ Write as you would to a colleague. You don't need special words or @-mentions.
 | --- | --- |
 | A comment ending with `— 🤖 ClawBridge agent · session review-checkout` | Written by an AI agent working for the team, named after its role |
 | `🤖 Claimed by ClawBridge agent session …` | An agent is now watching this review issue |
-| `🤖 Released by ClawBridge agent session … (done)` | The agent has finished with this issue |
+| `🤖 Released by ClawBridge agent session … (done)` | The agent has finished with this issue. Instead of `done`, the brackets may say why it stopped: `released by the coordinator`, `moved to other work`, `access ended` or `session ended` |
 | The label **agent-working** | An agent is currently assigned to this issue |
+| A project update ending with `— 🤖 ClawBridge project health` | An automatic health note for the project (on track, at risk, off track), posted when it changes |
 
 The 🤖 line is a label, not a signature: anyone could type it. If something
 looks wrong, ask a person on the team.

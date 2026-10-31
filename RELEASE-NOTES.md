@@ -24,6 +24,29 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   release's tag, set `CLAWBRIDGE_VERIFY=required` (the install scripts then need the GitHub CLI) or run
   `clawbridge self-update --verify-attestation`. Turning this check on by default is planned after 1.0.
 
+## Sign-in
+
+- **Google sign-in is removed; device keys are the only sign-in.** Removed: the Google OAuth sign-in (`clawbridge
+  login`, `logout`, `setup join` and `device enroll` now exit 2 and say to ask an owner for an invite and run
+  `clawbridge join`), its OS keychain entry (deleted once, best effort, the first time a profile that names it is
+  read), the OAuth and gcloud/ADC credential routes with their flags and profile keys (old profile keys load with a
+  one-line warning; a profile still on `oauth`, `gcloud` or `adc` is refused with how to join), `serve --audience` and
+  the OAuth client flags, and the OAuth client in `/v1/config` (its four keys stay, empty, for older clients). Kept:
+  Google Cloud for onboarding and hosting with your own `gcloud`, and the scheduler tick's OIDC verifier
+  (`CLAWBRIDGE_TICK_AUDIENCE`). A server with `google` in `CLAWBRIDGE_AUTH` or `serve --auth` refuses to start (exit 2:
+  "clawbridge serve: Google sign-in was removed in v1.0; set CLAWBRIDGE_AUTH=device after every member has an active
+  device …"), whatever the spelling (comma or space, any case, `--auth` or `CLAWBRIDGE_AUTH`), as does one passed
+  `--audience` or an OAuth client flag with a value; with an empty value (an older compose file's) they are ignored.
+  `CLAWBRIDGE_AUDIENCE` and `CLAWBRIDGE_OAUTH_*` left in its environment are ignored with one warning, and `cloud check
+  server` warns while the env file has them. A Bearer (Google ID token) request is refused with `unauthenticated` and
+  how to join, and never counts toward the address's failed sign-in limit. A profile moved to a device key before this
+  release keeps its notification state (its binding is unchanged). `deploy/compose.yaml` now defaults
+  `CLAWBRIDGE_AUTH` to `device` and passes none of the five old Google settings (`cloud check server` warns while the
+  env file still has them); switch a server to `device` before you deploy this release. An agent MCP entry
+  installed on a Google route now stops with the same message; re-run `clawbridge mcp install` after joining with a
+  device key (device-route entries are unaffected). No schema change.
+  Linear config scope: none.
+
 ## Notifications
 
 - **An idle Claude Code agent can wake by itself through a channel (opt-in, per session).** ClawBridge's repository is
@@ -65,13 +88,14 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   `notify --adapter command`, and a Claude Code channel with `mcp install --channel`). An untouched seeded document is
   offered the update with `linear seed-docs --update`. Linear config scope: none.
 - The README and the installation guide say what the installer needs (`curl`, and `sha256sum` or `shasum`) and how to
-  get `curl` on a minimal Linux image, found on a fresh-Linux walkthrough (G8). Linear config scope: none.
+  get `curl` on a minimal Linux image, which a fresh-Linux walkthrough found missing. Linear config scope: none.
 - **Removing Google sign-in (v1.0)**: `docs/operations/google-sign-in-removal.md` is the order to move a server and
   every member to device keys before v1.0, which accepts device keys only: current clients, a device for every
   active member, the owner's check (`user list`, `device list --member`), a device-signed `whoami` per member as the
   gate, `CLAWBRIDGE_AUTH=device` on the current version (rollback: `google,device`), then the v1.0 deploy and
   removing the OAuth settings. It names v1.0's start-up refusal and its message for a Google token. Linear config
   scope: none.
+- The README no longer calls the binaries plainly unsigned (each release has a build attestation, linked), says the hooks are installed on Windows too (not yet proven on a desktop), and links the 1.0 upgrade guide; the 1.0 notes lead with the sign-in change. The reviewer quickstart lists every reason a release note can give and the project health note. The first-deployment guide gives the Google Cloud estimate the playbook's table carries ($21.50 or $34), names the env file's required settings, makes every generated key with `cloud env init` (the Linear app's token key too), says to recreate the api after adding settings, invites colleagues with `clawbridge invite` (the only way in since v1.0), and fixes a broken link. The local-hosting guide creates the first project before inviting, updates a release-tag checkout, says how to trust mkcert's root and how to turn on the Linear app, and points to the `clawbridge-provision-local` playbook. Linear config scope: none.
 - Two leftovers of Google sign-in are gone from the docs: a stream request is signed like any other (no ID token), and
   docs/development.md speaks of cloud acceptance rather than Google's. Linear config scope: none.
 
@@ -100,9 +124,8 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   the server's watcher has had no good tick in the last hour. docs/linear.md, docs/reference/api.md. No schema change.
   Linear config scope: none.
 - **The terminal interface's Overview no longer lists a hosted server's items for a local workspace:** the dispatcher
-  model as needing attention, the intake line, and the PROVEN gate list, which a local user can't act on (found on
-  the G8 fresh-Linux walkthrough). docs/usage.md. Linear config scope: none.
-- **An app write while Linear is down answers 503 `linear_unavailable`, not 400 `invalid`.** In tonight's Linear
+  model as needing attention, the intake line, and the PROVEN gate list, which a local user can't act on. docs/usage.md. Linear config scope: none.
+- **An app write while Linear is down answers 503 `linear_unavailable`, not 400 `invalid`.** During a Linear
   outage the server refused agents' writes as bad requests. When the write provably never reached Linear, the answer
   is now "Linear is unavailable; nothing was sent; safe to retry with the same operation ID" (with "after N" when
   Linear said), and Linear limiting the app is `rate_limited` (429), said the same way; an uncertain write stays
@@ -110,29 +133,6 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   again. Older clients see an uncertain 503 and keep the operation ID for an identical retry. The server also logs
   each kind of Linear failure once a minute per operation: kind, operation, Linear's HTTP status and whether it was
   sent, never a token or text. docs/linear.md. No schema change. Linear config scope: none.
-
-## Sign-in
-
-- **Google sign-in is removed; device keys are the only sign-in.** Removed: the Google OAuth sign-in (`clawbridge
-  login`, `logout`, `setup join` and `device enroll` now exit 2 and say to ask an owner for an invite and run
-  `clawbridge join`), its OS keychain entry (deleted once, best effort, the first time a profile that names it is
-  read), the OAuth and gcloud/ADC credential routes with their flags and profile keys (old profile keys load with a
-  one-line warning; a profile still on `oauth`, `gcloud` or `adc` is refused with how to join), `serve --audience` and
-  the OAuth client flags, and the OAuth client in `/v1/config` (its four keys stay, empty, for older clients). Kept:
-  Google Cloud for onboarding and hosting with your own `gcloud`, and the scheduler tick's OIDC verifier
-  (`CLAWBRIDGE_TICK_AUDIENCE`). A server with `google` in `CLAWBRIDGE_AUTH` or `serve --auth` refuses to start (exit 2:
-  "clawbridge serve: Google sign-in was removed in v1.0; set CLAWBRIDGE_AUTH=device after every member has an active
-  device …"), whatever the spelling (comma or space, any case, `--auth` or `CLAWBRIDGE_AUTH`), as does one passed
-  `--audience` or an OAuth client flag with a value; with an empty value (an older compose file's) they are ignored.
-  `CLAWBRIDGE_AUDIENCE` and `CLAWBRIDGE_OAUTH_*` left in its environment are ignored with one warning, and `cloud check
-  server` warns while the env file has them. A Bearer (Google ID token) request is refused with `unauthenticated` and
-  how to join, and never counts toward the address's failed sign-in limit. A profile moved to a device key before this
-  release keeps its notification state (its binding is unchanged). `deploy/compose.yaml` now defaults
-  `CLAWBRIDGE_AUTH` to `device` and passes none of the five old Google settings (`cloud check server` warns while the
-  env file still has them); the hosted swap to `device` happens before this deploy. An agent MCP entry
-  installed on a Google route now stops with the same message; re-run `clawbridge mcp install` after joining with a
-  device key (device-route entries are unaffected). No schema change.
-  Linear config scope: none.
 
 ## Operations
 
@@ -246,25 +246,25 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   its limit of 5 an hour per email, which anyone could spend to lock the invitee out; the limit of 10 an hour per
   client address, the code's 80 bits and the per-address refusal log stay. docs/sign-in.md.
   No schema change. Linear config scope: none.
-- **`runner fetch` also refuses a clone that sets `extensions.worktreeConfig` or has a `config.worktree`** (G9 S4-01).
+- **`runner fetch` also refuses a clone that sets `extensions.worktreeConfig` or has a `config.worktree`**.
   With that extension git reads `.git/config.worktree` as well, so an agent could hide `core.hooksPath` or
   `core.fsmonitor` there from the pre-fetch check. docs/runner.md. Linear config scope: none.
-- **The runner's agent asks before each Bash command** (G9 S4-03). Claude Code runs sandboxed Bash without a prompt
+- **The runner's agent asks before each Bash command**. Claude Code runs sandboxed Bash without a prompt
   by default, which docs/runner.md's "you approve commands" didn't account for. The generated settings now set
   `autoAllowBashIfSandboxed: false`; only the git reads and commits and the session's self-test are pre-approved (the
   self-test now lives in `<work>/<session>.selftest`, which Bash can't write, and `git … --output` is denied). An
   unattended run opts in with `"auto_allow_bash": true` in the runner's settings, and the launch result shows
   `bash_approval` (`ask` or `auto`). docs/runner.md. Linear config scope: none.
-- **claude's API key or sign-in token no longer reaches the runner agent's Bash** (G9 S4-02). The launch sets
+- **claude's API key or sign-in token no longer reaches the runner agent's Bash**. The launch sets
   `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, so claude strips credentials from its Bash, hooks and MCP server, and the
   sandbox self-test now fails a session whose Bash can see `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or
   `CLAUDE_CODE_OAUTH_TOKEN`. The scrub turns Bash auto-allow off, so an `auto_allow_bash` launch runs without it and is
   refused while one of those is set (sign claude in with its own login instead). docs/runner.md. Linear config scope:
   none.
-- **`runner fetch`'s token scan no longer skips an added line that begins `++ `** (G9 S4-04). In the patch such a line
+- **`runner fetch`'s token scan no longer skips an added line that begins `++ `**. In the patch such a line
   reads `+++ `, which the scan took for a file header; a `+++ ` line now names the file only before a file's first
   hunk. Linear config scope: none.
-- **`clawbridge join --code` warns that the code is on the command line** (G9 S2-01): shell history and other users'
+- **`clawbridge join --code` warns that the code is on the command line**: shell history and other users'
   process lists can see it. It still works once; leaving out `--code` asks for it unechoed (or reads it from stdin).
   docs/sign-in.md. Linear config scope: none.
 

@@ -59,10 +59,11 @@ All three run the same server. The table shows what differs.
 | Your CLI | `gcloud`, with a named configuration | AWS CLI v2, with a named profile you set up (`aws configure sso --profile clawbridge-onboarding`) | `ssh`, with your own `~/.ssh/config` |
 | Backups | a Cloud Storage bucket | an S3 bucket | S3-compatible storage off the host (Backblaze B2, Cloudflare R2, S3 and the like), with a key that can't delete |
 | Where you run it | wherever `gcloud` runs | macOS, Linux or WSL (the AWS route reads its requests from `/dev/stdin`); on Windows, [set up WSL first](../installation.md#windows-set-up-wsl-for-the-aws-route) | wherever `ssh` runs |
-| Monthly estimate | about $15–30 | about $19 (`t4g.small`) or $31.50 (`t4g.medium`) | your host's own cost, plus the backup store (often free under 10 GB) |
+| Monthly estimate | about $21.50 (`e2-small`) or $34 (`e2-medium`) | about $19 (`t4g.small`) or $31.50 (`t4g.medium`) | your host's own cost, plus the backup store (often free under 10 GB) |
 
 **Your own server** is not yet verified end to end on a live non-GCP/AWS host; the
-steps are tested with a fake SSH transport.
+steps are tested with a fake SSH transport. **Google Cloud and AWS** were rehearsed
+step by step, not run end to end on a fresh account. If you find a gap, please report it.
 
 ClawBridge never creates or edits your CLI profile or configuration, and never
 reads `~/.aws` or the gcloud credential store.
@@ -126,7 +127,8 @@ On your own server you need, before anything else:
 
 A small server is enough for a team. The playbooks carry a fixed estimate table
 per size and cloud.
-- **Google Cloud:** about $15–30 a month with its disk, static IP and backups.
+- **Google Cloud:** about $21.50 a month on `e2-small` and $34 on `e2-medium`, with its
+  disk, static IP and backups.
 - **AWS (`us-east-1`):** `t4g.small` is about $19 a month and `t4g.medium` about
   $31.50, with the encrypted data volume, Elastic IP and S3 backups. Other
   regions cost up to about 25% more. The Elastic IP is billed while allocated,
@@ -187,8 +189,13 @@ Create, with the names recorded as you go:
   bucket. The table per store is in
   [backup and recovery](backup-and-recovery.md).
 
-Done when the infra check fails only with `data_not_mounted`. The next step
-mounts the volume.
+On Google Cloud, connect once first with `gcloud compute ssh clawbridge-1 --project …
+--zone … --tunnel-through-iap` in your own terminal (it makes your key), with a firewall
+rule allowing `35.235.240.0/20` on tcp:22 (IAP); `cloud check --vm` refuses until both exist.
+
+On Google Cloud and AWS, done when the infra check fails only with `data_not_mounted`;
+the next step mounts the volume. On your own server, where you mounted it (or set
+`CLAWBRIDGE_DATA_ON_ROOT_DISK=1`) already, done when it fails only with `port_closed`.
 
 ```sh
 # Google Cloud
@@ -232,9 +239,13 @@ unset (it is `device`). See [signing in with invites and device keys](../sign-in
 
 Put the release on the server and write `/etc/clawbridge/clawbridge.env`
 (root-owned, mode 0600) with the
-[private configuration](deployment.md#private-configuration), generating the
-database password on the server. Then start the stack with Compose. Caddy
-obtains the TLS certificate for the domain.
+[private configuration](deployment.md#private-configuration). It needs at least
+`POSTGRES_PASSWORD`, `CLAWBRIDGE_DOMAIN` (the server's DNS name) and
+`CLAWBRIDGE_BOOTSTRAP_OWNER` (your own email). Make the database password on the
+server, before the first `compose up`, with `clawbridge cloud env init` and the route's
+flags (`--vm clawbridge-1 --project … --zone …`, `--instance … --region …`, or
+`--ssh HOST`): it prints only the key's name. Then start the stack with Compose.
+Caddy obtains the TLS certificate for the domain.
 
 **On AWS:** backups go to S3. Set them in the same file:
 - `CLAWBRIDGE_BACKUP_URL=s3://BUCKET`;
@@ -267,7 +278,9 @@ clawbridge cloud check infra server version backups --server https://clawbridge.
 ```
 
 - `server` passes when HTTPS answers with a valid certificate and the server
-  reports itself healthy.
+  reports itself healthy. With a route to the server (`--vm`, `--instance` or
+  `--ssh`) it also checks the env file's required settings, that the api, caddy
+  and db containers run, and that the running server uses device sign-in.
 - `version` passes when the server runs the same release as your client.
 
 ## 7. Create the workspace
@@ -275,7 +288,9 @@ clawbridge cloud check infra server version backups --server https://clawbridge.
 The host operator lets the owner named in `CLAWBRIDGE_BOOTSTRAP_OWNER` in with a
 one-time code, which also creates the workspace:
 1. On the server host, in your own terminal (never through an agent), run
-   `operator bootstrap-invite --workspace my-team`. It creates the workspace, owned
+   `operator bootstrap-invite --workspace my-team --server https://clawbridge.example.com`
+   inside the api container (`docker compose … run --rm --no-deps api operator …`;
+   the full command is in the link below). It creates the workspace, owned
    by `CLAWBRIDGE_BOOTSTRAP_OWNER`, and prints a single-use code valid for 24 hours.
    The command is under
    [letting the owner in](deployment.md#letting-the-owner-in-operator-bootstrap-invite).
@@ -333,11 +348,9 @@ It makes the one-time code on your computer and hands it to the server's
 `operator bootstrap-invite --code-stdin` through a short-lived encrypted
 parameter, so it is in no SSM command history and never on screen, then joins
 this device with it. Run it yourself, never through an agent. If you set the server up
-with `clawbridge onboard`'s AWS hand-over, it offers to run this for you once the
-checks pass (or when you run `clawbridge onboard` again and resume), and then goes on
-to the first project (section 8) and offers to open ClawBridge. `cloud bootstrap`,
-and onboarding's offer to run it, came with v0.3.5; going on to the first project
-and offering to open ClawBridge, with v0.3.6.
+with `clawbridge onboard` (on Google Cloud, AWS or your own server), it offers to run
+this for you once the checks pass (or when you run `clawbridge onboard` again and
+resume), and then goes on to the first project (section 8) and offers to open ClawBridge.
 
 Done when `clawbridge cloud check workspace` passes: you are signed in, and you
 own the workspace.
@@ -349,8 +362,8 @@ clawbridge project create my-project
 ```
 
 With `clawbridge onboard`, this step is asked for you once the workspace exists:
-after its own `cloud bootstrap` on AWS, or, when you signed in by hand (as on
-Google Cloud), when you run `clawbridge onboard` again and resume. It creates the
+after its own `cloud bootstrap`, or, when you signed in by hand, when you run
+`clawbridge onboard` again and resume. It creates the
 project, saves it as your profile's default and offers to open ClawBridge.
 
 Optionally bind it to a Linear team with `clawbridge linear link` (see
@@ -376,53 +389,41 @@ clawbridge cloud secret set CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET --instance i-012
 On AWS, run one `secret set` at a time per key: two at once would share the
 parameter's name.
 
-Generate the token key on the server, in its shell, so it is never printed. It
-is added only when the file has no token key yet, so it is set exactly once:
+Make the token key on the server with the same command as the database password, so it
+is never printed and is added only when the file has none yet:
 
 ```sh
-[ "$(sudo grep -c '^CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=' /etc/clawbridge/clawbridge.env)" = 0 ] &&
-  openssl rand -base64 32 | sed 's/^/CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=/' |
-  sudo tee -a /etc/clawbridge/clawbridge.env >/dev/null
+clawbridge cloud env init CLAWBRIDGE_LINEAR_APP_TOKEN_KEY --vm clawbridge-1 --project example-project --zone europe-west1-b
+# or --instance i-0123456789abcdef0 --region eu-west-1 --profile clawbridge-onboarding, or --ssh admin@203.0.113.7
 ```
-
-The server's shell:
-- **On Google Cloud:** `gcloud compute ssh` through IAP.
-- **On AWS:** a Session Manager session, `aws ssm start-session --target
-  i-0123456789abcdef0 --profile clawbridge-onboarding --region eu-west-1` (it
-  needs AWS's Session Manager plugin). The command above prints nothing, so
-  nothing lands in a session log.
-- **On a server outside both clouds:** use `--ssh HOST` with `secret set`
-  instead of the cloud flags.
 
 The entries and their rules are in
 [the ClawBridge Linear app](deployment.md#the-clawbridge-linear-app-optional).
-Restart the API, install the app in your Linear workspace, and add it to each
-private team the project binds.
+Recreate the API so it reads the new settings (`docker compose … up -d --no-deps api`,
+as in the [deployment guide](deployment.md)), check it with `clawbridge cloud check
+linear-app` and the route's flags, then install the app in your Linear workspace and add
+it to each private team the project binds.
 
 ## 10. Invite your team
 
-Grant each person a role in the project:
-
-```sh
-clawbridge project role-set colleague@example.com member
-```
-
-They join with Start's "Join a team server" (see [joining a project](../onboarding.md)).
-
-**With device sign-in**, invite them instead, and give each the code and the
-server's URL yourself (the client commands are in v0.3.5):
+Invite each person to the project; they sign in with their own device key:
 
 ```sh
 clawbridge invite --email colleague@example.com --grant my-project=member
 ```
 
-See [if your server uses invites](../onboarding.md#if-your-server-uses-invites-device-sign-in).
+Give them the invite link, or the code and the server's URL, the way you'd send a
+password. They join with Start's "Join a team server" (see
+[joining a project](../onboarding.md) and
+[invites and the one-time code](../sign-in.md#invites-and-the-one-time-code)). For
+someone who has already joined, `clawbridge project role-set colleague@example.com member`
+changes their role in a project.
 
 ## 11. The dispatcher (optional)
 
 The dispatcher is an optional coordinator that confirms routine claims and
-escalates the rest to a person. It is being built in steps and is off; see
-[the dispatcher](../dispatcher.md).
+escalates the rest to a person. It is off until the project owner turns it on (rules
+mode); model mode is still being proven. See [the dispatcher](../dispatcher.md).
 
 ## Afterwards
 

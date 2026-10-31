@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'">
+<title>ClawBridge (spike)</title>
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/main.js"></script>
+</head>
+<body>
+<header><h1>ClawBridge</h1><span id="hello"></span><button id="term">Start claude</button><button id="bad">Try pty.open from main</button></header>
+<main>
+<section><h2>Sessions</h2><ul id="sessions"></ul></section>
+<section><h2>Doctor</h2><ul id="doctor"></ul></section>
+<section><h2>Log</h2><pre id="log"></pre></section>
+</main>
+</body>
+</html>

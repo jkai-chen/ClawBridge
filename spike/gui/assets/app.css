@@ -1,0 +1,7 @@
+body { font: 14px -apple-system, system-ui, sans-serif; margin: 0; background: #fafafa; color: #222; }
+header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ddd; }
+header h1 { font-size: 16px; margin: 0; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+section:last-child { grid-column: 1 / -1; }
+li.fail { color: #b00020; } li.warn { color: #9a6700; } li.pass { color: #2e7d32; }
+pre { background: #eee; padding: 8px; white-space: pre-wrap; }

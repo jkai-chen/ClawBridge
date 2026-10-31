@@ -46,3 +46,36 @@ jobs:
         run: |
           ./guiprobe.exe -wsl Ubuntu-24.04 -pty claude
           if ($LASTEXITCODE -ne 0) { exit 1 }
+  gui-build:
+    # Q1: the Wails v3 shell builds on Linux (WebKitGTK 4.1) and Windows (WebView2).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: spike/gui/go.mod
+          cache-dependency-path: spike/gui/go.sum
+      - name: Linux webview headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb
+      - name: Build the spike shell
+        shell: bash
+        working-directory: spike/gui
+        run: |
+          start=$(date +%s)
+          go build -o gui-spike$([ "$RUNNER_OS" = Windows ] && echo .exe) .
+          echo "build seconds: $(( $(date +%s) - start ))"
+          ls -la gui-spike*
+      - name: Start it headless on Linux (backend absent; window opens, then stop)
+        if: runner.os == 'Linux'
+        working-directory: spike/gui
+        run: |
+          CB_BACKEND=/bin/false timeout 10 xvfb-run -a ./gui-spike > run.log 2>&1 || code=$?
+          cat run.log | head -20
+          # 124 = still running when timeout stopped it: the window loop started.
+          test "${code:-0}" = 124

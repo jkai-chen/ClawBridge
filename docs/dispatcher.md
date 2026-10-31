@@ -288,11 +288,16 @@ one keeps running until the new test passes.
 
 - **A case per claim.** While an agent is live and under its caps, each watcher tick opens a **decide case** for each
   pending claim. A case holds:
-  - the facts the tick read;
+  - the facts the tick read, which say for each matched domain whether the claiming session is trusted there (a label
+    match never is);
   - the actions the guardrails permit;
   - a deadline: the owner's, 30–300 s, else 90 s.
 - **Deciding.** The agent takes the case with `cases/next`, makes up to 8 reads, and then decides or abstains.
   - A decision must be one of the permitted actions.
+  - Its reason must agree with the facts: `trusted` needs the session trusted for a matched project domain, and
+    `untrusted` needs it not to be. With no project match, or more than one, neither is right: the reason becomes `no_domain`, `label_only`
+    or `ambiguous`, as the rules would say. A reason that contradicts these facts is corrected to the consistent one and
+    recorded as overridden, and a contradictory confirm is not carried out; the rules decide it next tick.
   - The dispatcher session carries it out after the same checks a rules decision gets: the claim, the policy, the
     session, the holders and the domain's trust are rechecked in the same transaction.
   - Anything that changed is recorded as `superseded`, and nothing is done.

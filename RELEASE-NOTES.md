@@ -18,6 +18,11 @@ computer. Upgrading from v0.3.x: docs/upgrading-to-1.0.md.
   tested against a stand-in model provider; a real provider key on a hosted server has not been run yet.
 - **The Google Cloud and AWS setup routes were rehearsed, not run end to end on a fresh account.** Each step is tested; a first
   deployment on a new cloud account may still find a gap: please report it.
+- **Downloads are checked against the release's own checksums by default.** `install.sh`, `install.ps1` and
+  `clawbridge self-update` check each download against the SHA256SUMS published with the same release, which proves
+  it arrived intact but not who built it. To also check that ClawBridge's release workflow built it from the
+  release's tag, set `CLAWBRIDGE_VERIFY=required` (the install scripts then need the GitHub CLI) or run
+  `clawbridge self-update --verify-attestation`. Turning this check on by default is planned after 1.0.
 
 ## Notifications
 

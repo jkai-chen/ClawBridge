@@ -1,0 +1,71 @@
+%% Source of docs/images/architecture-detail.svg. After editing, regenerate the SVG from the repo root with:
+%%   npx -y @mermaid-js/mermaid-cli@11.4.2 -b white -c cfg.json -i docs/images/architecture-detail.mmd -o docs/images/architecture-detail.svg
+%% where cfg.json contains: {"htmlLabels":false,"flowchart":{"htmlLabels":false}}
+%% (htmlLabels off makes labels SVG text, not foreignObject, so the image renders through an img tag.)
+flowchart TB
+    subgraph PEOPLE ["People"]
+        CLI["CLI"]
+        TUI["TUI"]
+        LUI["Linear UI"]
+        BROWSER["Web browser"]
+    end
+    subgraph AGENT ["Agent session: Claude Code or Codex"]
+        MCP["ClawBridge MCP server"]
+        HOOKS["Hooks and notifier, inbox notifications"]
+        CHAN["Channel wake, opt-in, Claude Code"]
+    end
+    subgraph CLIENT ["ClawBridge client, on each computer"]
+        KEY["Device key (OS key store or 0600 file)"]
+        OUTBOX["Local outbox"]
+        MIRROR["Read-only mirror, synced on demand"]
+        WEB["Local web UI, planned (served by the client on localhost)"]
+    end
+    subgraph SERVER ["Hosted server"]
+        CADDY["Caddy, TLS"]
+        API["API and bus: sessions, messages, claims, audit history"]
+        PG[("Postgres")]
+        WATCH["Watcher: Linear sync and intake (label, delegation, mention)"]
+        HOOK["Webhook receiver, optional"]
+        QUEUE["Write queue and ledger"]
+    end
+    subgraph DISP ["Dispatcher, on the server host"]
+        RULES["Rules engine"]
+        MODEL["Model engine, optional, in the agentd rootless sandbox"]
+        EGRESS["Egress proxy"]
+    end
+    LIN["Issue tracker: Linear, via the ClawBridge Linear app"]
+    PROV["Model provider API (owner's own key)"]
+    BACKUP[("Backups: Amazon S3 or Google Cloud Storage")]
+    GHR["GitHub releases: checksums and build provenance attestations"]
+    GHCR["GHCR images"]
+
+    CLI --> KEY
+    TUI --> KEY
+    BROWSER -.-> WEB
+    WEB -.-> KEY
+    MCP --> KEY
+    HOOKS --> MCP
+    CHAN --> MCP
+    KEY --- OUTBOX
+    KEY --- MIRROR
+    KEY ==>|"device-signed requests"| CADDY
+    CADDY --> API
+    API --- PG
+    WATCH --> API
+    API --> RULES
+    RULES --> MODEL
+    MODEL --> EGRESS
+    EGRESS ==>|"sandbox: server and model provider only"| CADDY
+    EGRESS ==>|"sandbox: server and model provider only"| PROV
+    LUI --> LIN
+    WATCH -->|"API reads"| LIN
+    LIN ==>|"HMAC webhook signature"| HOOK
+    HOOK --> WATCH
+    API --> QUEUE
+    QUEUE -->|"API writes"| LIN
+    PG -->|"backups"| BACKUP
+    GHR -->|"install and update"| KEY
+    GHCR -->|"server images"| API
+
+    classDef planned fill:#e5e5e5,stroke:#888,stroke-width:2px,stroke-dasharray:5,color:#555
+    class WEB planned

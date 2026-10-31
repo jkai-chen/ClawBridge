@@ -4,6 +4,22 @@ ClawBridge separates durable coordination data from the agent process handling i
 A workspace contains projects; each project contains sessions, messages, recipient
 deliveries and an append-only audit history. Session and message IDs are immutable.
 
+![ClawBridge components and trust boundaries: people, agent sessions and the client on each computer; the hosted server with the bus, watcher, webhook receiver, write queue and dispatcher; Linear, the model provider, backups and releases](images/architecture-detail.svg)
+
+Solid boxes and lines ship in v1.0.0. The dashed grey box and dashed edges, the local web UI, are
+planned and not in v1.0.0. The thick edges cross a trust boundary. "Device-signed
+requests" means every request from a computer to the server carries a signature
+made with that computer's device key. "HMAC webhook signature" means the server
+accepts a Linear delivery only if its signature verifies with the signing secret
+the operator set. "Sandbox" means the optional model engine runs in a rootless
+sandbox whose only routes out, through the egress proxy, are the ClawBridge
+server (at its public HTTPS address, through Caddy) and the owner's model provider.
+Webhooks are optional and off by default; the watcher polls Linear, and polling
+is the fallback and the record of progress. Local mode is the same bus on SQLite,
+on one machine.
+
+The diagram's source is [images/architecture-detail.mmd](images/architecture-detail.mmd); regenerate the SVG with mermaid-cli after editing it.
+
 ## Application boundary
 
 The CLI, stdio MCP server and terminal UI use the same scoped application API.

@@ -16,6 +16,8 @@ ClawBridge first (`clawbridge self-update`). SSM keeps every command's output in
 the account's history, and the bootstrap's one-time owner invite is a
 credential, so it never runs over plain `send-command`. The server must run the
 same release or newer: its `operator bootstrap-invite` takes the code.
+The code must be one `clawbridge` generated (the server refuses a weaker one), so
+never make one by hand.
 
 - **Env file (step 6):** `CLAWBRIDGE_AUTH=device`, set explicitly in the settings block: a release before 1.0
   defaults it to `google`, which needs Google settings this playbook doesn't create.

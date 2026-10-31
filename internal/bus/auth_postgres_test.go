@@ -993,7 +993,12 @@ func TestPostgresOperatorBootstrapInvite(t *testing.T) {
 		t.Fatal("took a malformed code:", err)
 	}
 	mine := devicekey.NewCode()
-	given, err := f.s.OperatorBootstrapInvite(context.Background(), ws2, owner, strings.ToLower(mine))
+	// The upper-case form is the only one it takes: a lower-cased code is
+	// refused as weak and leaves no workspace behind.
+	if _, err = f.s.OperatorBootstrapInvite(context.Background(), ws2, owner, strings.ToLower(mine)); err == nil || err.Error() != devicekey.ErrWeakCode || f.workspaceExists(ws2) {
+		t.Fatal("took a lower-cased code:", err)
+	}
+	given, err := f.s.OperatorBootstrapInvite(context.Background(), ws2, owner, mine)
 	if err != nil || given["code"] != nil || given["workspace_created"] != true {
 		t.Fatal(given, err)
 	}

@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 )
 
@@ -29,13 +30,55 @@ const CodePrefix = "CBJ-"
 const codeChars = 16
 
 // NewCode makes an invite code: 80 random bits as CBJ-XXXX-XXXX-XXXX-XXXX.
-func NewCode() string {
-	var b [10]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
+// It redraws the rare code StrongCode refuses (about 2.6e-8 of draws), so a
+// generated code always passes the server's check.
+func NewCode() string { return newCodeFrom(rand.Reader) }
+
+func newCodeFrom(r io.Reader) string {
+	for {
+		var b [10]byte
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			panic(err)
+		}
+		s := encoding.EncodeToString(b[:])
+		code := CodePrefix + s[0:4] + "-" + s[4:8] + "-" + s[8:12] + "-" + s[12:16]
+		if StrongCode(code) {
+			return code
+		}
 	}
-	s := encoding.EncodeToString(b[:])
-	return CodePrefix + s[0:4] + "-" + s[4:8] + "-" + s[8:12] + "-" + s[12:16]
+}
+
+// ErrWeakCode is the refusal for a code StrongCode rejects. It names the
+// shape wanted and never the code.
+const ErrWeakCode = "the given code is not one clawbridge would make: it must read CBJ-XXXX-XXXX-XXXX-XXXX, upper case, each X from 0-9 and A-Z without I, L, O and U, drawn at random (use clawbridge's own generator)"
+
+// StrongCode reports whether a code a caller chose is as strong as NewCode's:
+// exactly NewCode's shape (CBJ-XXXX-XXXX-XXXX-XXXX, upper case, in
+// Crockford's alphabet) and not visibly patterned. A wrong guess burns no
+// invite, so only the code's strength protects it; the shape cannot prove
+// the caller drew its characters from a CSPRNG, only refuse the codes a
+// person would type. A random draw of 16 characters from 32 holds fewer than six
+// distinct ones with a probability of about 2.6e-8, which is why NewCode
+// redraws such a code.
+func StrongCode(code string) bool {
+	rest, ok := strings.CutPrefix(code, CodePrefix)
+	if !ok || len(rest) != codeChars+3 {
+		return false
+	}
+	seen := map[rune]bool{}
+	for i, c := range rest {
+		if i%5 == 4 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !strings.ContainsRune(crockford, c) {
+			return false
+		}
+		seen[c] = true
+	}
+	return len(seen) >= 6
 }
 
 // NormalCode reads a typed code: any case, spaces or dashes, with or

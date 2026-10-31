@@ -28,7 +28,15 @@
   a second `--rollback` undoes the first. It's a person's command: refused under an agent's environment, even at a
   terminal. If the slot can't be kept, the update still goes ahead and says so. `self-update --check` says whether a
   rollback is available. A rollback doesn't re-check build provenance; the recorded SHA-256 proves it is the file that
-  was replaced.
+  was replaced. No schema change. Linear config scope: none.
+
+## Security
+
+- **`operator bootstrap-invite --code-stdin` refuses a weak code.** A wrong guess no longer burns an invite, so only the
+  code's strength protects it, and the server used to check only its format. It now accepts only the form `clawbridge`
+  itself generates (`CBJ-` and 16 random characters in four groups) and refuses an obviously patterned one, without
+  echoing it. `clawbridge cloud bootstrap` already makes such codes; anything else that passes a code must draw it from
+  a cryptographic random generator. No schema change. Linear config scope: none.
 
 # ClawBridge v1.0.0 (released 2 Nov)
 

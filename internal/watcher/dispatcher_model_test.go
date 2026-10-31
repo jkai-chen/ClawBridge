@@ -364,3 +364,296 @@ func TestModelCaseReadsTheProjectTheClientDidNotReport(t *testing.T) {
 		t.Fatal(kind, source, project, domain)
 	}
 }
+
+// caseMatches returns the domain matches in the case's facts.
+func (e *env) caseMatches(c map[string]any) []any {
+	e.t.Helper()
+	facts, _ := c["facts"].(map[string]any)
+	matches, _ := facts["domain_matches"].([]any)
+	return matches
+}
+
+// The model is told whether the claiming session is trusted for each domain
+// the issue's project matches, and a label match is never trusted. The trust
+// list itself stays out of the facts.
+func TestModelCaseFactsSayWhetherTheSessionIsTrusted(t *testing.T) {
+	for _, tc := range []struct {
+		name, session string
+		want          bool
+	}{{"trusted", "eng", true}, {"untrusted", "dev", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t)
+			token := e.modelOn("eng")
+			e.insts["dev"] = e.call("register_session", "dev", map[string]any{"instance": "dev-i"})["instance"].(string)
+			e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+			e.propose(tc.session, issueA, projPay)
+			if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+				t.Fatal(tick.Dispatch, tick.Error)
+			}
+			c := e.next(token)
+			m := e.caseMatches(c)
+			if len(m) != 1 || m[0].(map[string]any)["by"] != "project" || m[0].(map[string]any)["trusted"] != tc.want {
+				t.Fatal(m)
+			}
+			raw, _ := json.Marshal(c)
+			if strings.Contains(string(raw), "trusted_sessions") {
+				t.Fatal("the trust list reached the model", string(raw))
+			}
+		})
+	}
+}
+
+func TestModelCaseFactsLabelMatchIsNeverTrusted(t *testing.T) {
+	e := setup(t)
+	token := e.modelOn("eng")
+	owner := e.call("whoami", "coord", map[string]any{})["principal"].(string)
+	e.call("label_policy_set", "coord", map[string]any{"expected_revision": 0, "label_policy": map[string]any{"labels": []any{"ops"}}})
+	// A second domain matched by a label only; "eng" is trusted there too.
+	e.call("dispatcher_domains_set", "coord", map[string]any{"expected_revision": 1, "dispatcher_domains": map[string]any{"domains": []any{
+		map[string]any{"id": "payments", "name": "Payments", "match": map[string]any{"linear_projects": []any{projPay}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "coord"}, "trusted_sessions": []any{map[string]any{"name": "eng"}}},
+		map[string]any{"id": "ops", "name": "Ops", "match": map[string]any{"labels": []any{"ops"}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "coord"}, "trusted_sessions": []any{map[string]any{"name": "eng"}}},
+	}}})
+	issue := appIssue(issueA, projPay, "unstarted")
+	issue["labels"] = map[string]any{"nodes": []any{map[string]any{"name": "ops"}}}
+	e.f.dispatchIssues = map[string]any{issueA: issue}
+	e.propose("eng", issueA, projPay)
+	if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	got := map[string]any{}
+	for _, m := range e.caseMatches(e.next(token)) {
+		entry := m.(map[string]any)
+		got[entry["by"].(string)] = entry["trusted"]
+	}
+	if len(got) != 2 || got["project"] != true || got["label"] != false {
+		t.Fatal(got)
+	}
+}
+
+// A decide whose reason contradicts the case's trust facts is recorded with the
+// consistent reason, as overridden, and the rules decide the claim at the next
+// tick; a consistent one is recorded as the model gave it.
+func TestModelDecideCorrectsAReasonThatContradictsTheFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name, session, action, reason, want string
+		overridden                          bool
+		recorded                            string
+	}{
+		{"trusted on an untrusted session", "dev", "wait", "trusted", "untrusted", true, "wait"},
+		{"untrusted on a trusted session", "eng", "confirm", "untrusted", "trusted", true, "wait"},
+		{"untrusted on an untrusted session", "dev", "wait", "untrusted", "untrusted", false, "wait"},
+		{"trusted on a trusted session", "eng", "confirm", "trusted", "trusted", false, "confirm"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t)
+			token := e.modelOn("eng")
+			e.insts["dev"] = e.call("register_session", "dev", map[string]any{"instance": "dev-i"})["instance"].(string)
+			e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+			e.propose(tc.session, issueA, projPay)
+			if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+				t.Fatal(tick.Dispatch, tick.Error)
+			}
+			id := e.next(token)["case_id"].(string)
+			r := e.tool(token, id, "decide", map[string]any{"action": tc.action, "reason_code": tc.reason, "explanation": "because", "usage": testUsage})
+			result, _ := r.Result.(map[string]any)
+			guardrail := "permitted"
+			if tc.overridden {
+				guardrail = "overridden"
+			}
+			if r.Error != "" || result["guardrail"] != guardrail || result["reason_code"] != tc.want || result["action_taken"] != tc.recorded {
+				t.Fatal(r)
+			}
+			var reason, recorded, explanation, action string
+			e.queryRow(`SELECT reason_code,guardrail,explanation,action FROM dispatcher_decisions WHERE kind='judgement'`, &reason, &recorded, &explanation, &action)
+			wantExplanation := "because"
+			if tc.overridden {
+				wantExplanation = "reason corrected: because"
+			}
+			if reason != tc.want || recorded != guardrail || explanation != wantExplanation || action != tc.recorded {
+				t.Fatal(reason, recorded, explanation, action)
+			}
+			if !tc.overridden {
+				return
+			}
+			// The case is superseded, so the rules decide the claim next.
+			if tc.session == "eng" {
+				// A contradictory confirm granted nothing; the rules confirm it.
+				if e.assignmentState("eng") != "proposed" {
+					t.Fatal("a contradictory confirm was carried out")
+				}
+				if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Actions["confirm"] != 1 || e.assignmentState("eng") != "confirmed" {
+					t.Fatal(tick.Dispatch, tick.Error)
+				}
+			}
+			if tc.session == "dev" {
+				if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Actions["escalate"] != 1 {
+					t.Fatal(tick.Dispatch, tick.Error)
+				}
+				var rulesReason, rulesAction string
+				e.queryRow(`SELECT reason_code,action FROM dispatcher_decisions WHERE kind='rules'`, &rulesReason, &rulesAction)
+				if rulesReason != "untrusted" || rulesAction != "escalate" {
+					t.Fatal(rulesReason, rulesAction)
+				}
+			}
+		})
+	}
+}
+
+// Confirm can be missing from the permitted set for a reason other than
+// trust. A trusted session that is stale may honestly wait with "trusted".
+func TestModelDecideTrustedReasonStandsWhenConfirmIsNotPermitted(t *testing.T) {
+	e := setup(t)
+	token := e.modelOn("eng")
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+	e.propose("eng", issueA, projPay)
+	e.sql(`UPDATE sessions SET last_seen='2020-01-01T00:00:00.000000000Z' WHERE name='eng'`)
+	if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	c := e.next(token)
+	if strings.Contains(fmtJSON(c["permitted_actions"]), "confirm") {
+		t.Fatal("confirm is permitted for a stale session", c["permitted_actions"])
+	}
+	r := e.tool(token, c["case_id"].(string), "decide", map[string]any{"action": "wait", "reason_code": "trusted", "explanation": "x", "usage": testUsage})
+	if r.Error != "" {
+		t.Fatal(r)
+	}
+}
+
+func fmtJSON(v any) string {
+	raw, _ := json.Marshal(v)
+	return string(raw)
+}
+
+// Confirm for an untrusted session is outside the permitted set, so it is
+// refused whatever reason comes with it.
+func TestModelDecideConfirmForAnUntrustedSessionIsRefused(t *testing.T) {
+	e := setup(t)
+	token := e.modelOn("eng")
+	e.insts["dev"] = e.call("register_session", "dev", map[string]any{"instance": "dev-i"})["instance"].(string)
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+	e.propose("dev", issueA, projPay)
+	if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	id := e.next(token)["case_id"].(string)
+	for _, reason := range []string{"trusted", "untrusted"} {
+		if r := e.tool(token, id, "decide", map[string]any{"action": "confirm", "reason_code": reason, "explanation": "x", "usage": testUsage}); r.Error != "tool_refused" {
+			t.Fatal(reason, r)
+		}
+	}
+	if e.assignmentState("dev") != "proposed" {
+		t.Fatal("a refused confirm was carried out")
+	}
+}
+
+// An escalate with a contradictory reason escalates once: the corrected
+// reason is recorded, and the next tick neither escalates again nor records
+// a second escalation by the rules.
+func TestModelDecideEscalateWithAContradictoryReasonEscalatesOnce(t *testing.T) {
+	e := setup(t)
+	token := e.modelOn("eng")
+	e.insts["dev"] = e.call("register_session", "dev", map[string]any{"instance": "dev-i"})["instance"].(string)
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+	e.propose("dev", issueA, projPay)
+	if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	id := e.next(token)["case_id"].(string)
+	r := e.tool(token, id, "decide", map[string]any{"action": "escalate", "reason_code": "trusted", "explanation": "x", "usage": testUsage})
+	result, _ := r.Result.(map[string]any)
+	if r.Error != "" || result["action_taken"] != "escalate" || result["reason_code"] != "untrusted" {
+		t.Fatal(r)
+	}
+	var reason, guardrail string
+	e.queryRow(`SELECT reason_code,guardrail FROM dispatcher_decisions WHERE kind='judgement'`, &reason, &guardrail)
+	if reason != "untrusted" || guardrail != "overridden" {
+		t.Fatal(reason, guardrail)
+	}
+	count := func(q string) (n int) {
+		e.queryRow(q, &n)
+		return
+	}
+	// An escalation is one row of its own, one log entry of kind escalation,
+	// and the decision that made it.
+	escalations := func() int { return count(`SELECT COUNT(*) FROM dispatcher_escalations`) }
+	logged := func() int { return count(`SELECT COUNT(*) FROM dispatcher_decisions WHERE kind='escalation'`) }
+	decided := func() int {
+		return count(`SELECT COUNT(*) FROM dispatcher_decisions WHERE action='escalate' AND kind IN ('rules','judgement')`)
+	}
+	if escalations() != 1 || logged() != 1 || decided() != 1 {
+		t.Fatal("after the decide:", escalations(), logged(), decided())
+	}
+	e.tick()
+	if escalations() != 1 || logged() != 1 || decided() != 1 || count(`SELECT COUNT(*) FROM dispatcher_decisions WHERE kind='rules'`) != 0 {
+		t.Fatal("after the next tick:", escalations(), logged(), decided())
+	}
+}
+
+// With no project domain match, neither trust reason is right: the decision is
+// recorded with the reason the rules would give, as overridden, and the rules
+// decide the claim at the next tick.
+func TestModelDecideTrustReasonWithNoProjectMatchIsCorrected(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, want string
+		label              bool
+		twoLabelDomains    bool
+	}{
+		{"no match, trusted", "trusted", "no_domain", false, false},
+		{"no match, untrusted", "untrusted", "no_domain", false, false},
+		{"one label match, untrusted", "untrusted", "label_only", true, false},
+		{"one label match, trusted", "trusted", "label_only", true, false},
+		{"two label matches, trusted", "trusted", "ambiguous", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t)
+			token := e.modelOn("eng")
+			if tc.label {
+				owner := e.call("whoami", "coord", map[string]any{})["principal"].(string)
+				e.call("label_policy_set", "coord", map[string]any{"expected_revision": 0, "label_policy": map[string]any{"labels": []any{"ops"}}})
+				domains := []any{
+					map[string]any{"id": "payments", "name": "Payments", "match": map[string]any{"linear_projects": []any{projPay}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "coord"}, "trusted_sessions": []any{map[string]any{"name": "eng"}}},
+					map[string]any{"id": "ops", "name": "Ops", "match": map[string]any{"labels": []any{"ops"}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "coord"}, "trusted_sessions": []any{}},
+				}
+				if tc.twoLabelDomains {
+					domains = append(domains, map[string]any{"id": "ops2", "name": "Ops 2", "match": map[string]any{"labels": []any{"ops"}}, "owner_principal": owner, "coordinator_session": map[string]any{"name": "coord"}, "trusted_sessions": []any{}})
+				}
+				e.call("dispatcher_domains_set", "coord", map[string]any{"expected_revision": 1, "dispatcher_domains": map[string]any{"domains": domains}})
+			}
+			issue := appIssue(issueA, projOther, "unstarted")
+			if tc.label {
+				issue["labels"] = map[string]any{"nodes": []any{map[string]any{"name": "ops"}}}
+			}
+			e.f.dispatchIssues = map[string]any{issueA: issue}
+			// The client reports no project, so the tick reads the issue (and its labels).
+			e.propose("eng", issueA, "")
+			if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Opened != 1 {
+				t.Fatal(tick.Dispatch, tick.Error)
+			}
+			c := e.next(token)
+			for _, m := range e.caseMatches(c) {
+				if m.(map[string]any)["by"] == "project" {
+					t.Fatal("a project match", m)
+				}
+			}
+			r := e.tool(token, c["case_id"].(string), "decide", map[string]any{"action": "wait", "reason_code": tc.reason, "explanation": "x", "usage": testUsage})
+			result, _ := r.Result.(map[string]any)
+			if r.Error != "" || result["guardrail"] != "overridden" || result["reason_code"] != tc.want {
+				t.Fatal(r)
+			}
+			var reason, guardrail string
+			e.queryRow(`SELECT reason_code,guardrail FROM dispatcher_decisions WHERE kind='judgement'`, &reason, &guardrail)
+			if reason != tc.want || guardrail != "overridden" {
+				t.Fatal(reason, guardrail)
+			}
+			if tick := e.tick(); tick.Dispatch == nil || tick.Dispatch.Actions["escalate"] != 1 {
+				t.Fatal(tick.Dispatch, tick.Error)
+			}
+			var rulesReason string
+			e.queryRow(`SELECT reason_code FROM dispatcher_decisions WHERE kind='rules' AND action='escalate'`, &rulesReason)
+			if rulesReason != tc.want {
+				t.Fatal(rulesReason)
+			}
+		})
+	}
+}

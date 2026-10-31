@@ -892,6 +892,61 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 		if !containsString(reasons, str(a, "reason_code")) {
 			return caseRefusal("invalid_argument"), nil
 		}
+		// The reason must agree with the case's own trust facts: "trusted" needs
+		// the session trusted for a matched project domain, and "untrusted"
+		// needs a project match it is not trusted in. Confirm can be missing for other reasons (an
+		// overlap, a stale session), so the permitted set is no signal. The
+		// agent ends a case on a refusal, so a contradicting reason is
+		// corrected and the decision recorded as overridden: the rules then
+		// decide the claim at the next tick.
+		var caseFacts struct {
+			Matches []struct {
+				By      string `json:"by"`
+				Trusted bool   `json:"trusted"`
+			} `json:"domain_matches"`
+		}
+		_ = json.Unmarshal([]byte(str(c, "facts")), &caseFacts)
+		trustedHere, projectMatches, labelMatches := false, 0, 0
+		for _, m := range caseFacts.Matches {
+			switch m.By {
+			case "project":
+				projectMatches++
+				trustedHere = trustedHere || m.Trusted
+			case "label":
+				labelMatches++
+			}
+		}
+		reasonCode, guardrail, explanation, action := str(a, "reason_code"), "permitted", str(a, "explanation"), str(a, "action")
+		// With one project match the reason is right when it agrees with the
+		// trust flag. With none, or several, neither trust reason is: the
+		// rules' own reason is used instead.
+		corrected := ""
+		switch {
+		case reasonCode != "trusted" && reasonCode != "untrusted":
+		case projectMatches == 0:
+			corrected = "no_domain"
+			if labelMatches == 1 {
+				corrected = "label_only"
+			} else if labelMatches > 1 {
+				corrected = "ambiguous"
+			}
+		case projectMatches > 1:
+			// The rules call more than one project domain ambiguous.
+			corrected = "ambiguous"
+		case reasonCode == "trusted" && !trustedHere:
+			corrected = "untrusted"
+		case reasonCode == "untrusted" && trustedHere:
+			corrected = "trusted"
+		}
+		if corrected != "" {
+			// A contradictory model never grants: a confirm is recorded as a
+			// wait, and the rules decide the claim at the next tick.
+			if action == "confirm" {
+				action = "wait"
+			}
+			reasonCode, guardrail = corrected, "overridden"
+			explanation = "reason corrected: " + explanation
+		}
 		dispatcher, err := one(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND role='system' AND name=?`, pid, DispatcherSessionName)
 		if err != nil {
 			return nil, err
@@ -904,16 +959,16 @@ func (s *Store) dispatcherCaseOutcome(ctx context.Context, tx *transaction, w, p
 		tx.actorID = str(dispatcher, "id")
 		recorded, err := as.dispatcherRecord(ctx, tx, w, p, dispatcher, map[string]any{
 			"subject_id": str(c, "subject_id"), "subject_revision": str(c, "subject_revision"), "policy_revision": asInt(c["policy_revision"]),
-			"engine": "model", "proposal": str(a, "action"), "reason_code": str(a, "reason_code"), "guardrail": "permitted",
-			"action": str(a, "action"), "domain": str(c, "domain"), "facts_source": str(c, "facts_source"), "app_project_id": str(c, "app_project_id"),
-			"explanation": str(a, "explanation"),
+			"engine": "model", "proposal": str(a, "action"), "reason_code": reasonCode, "guardrail": guardrail,
+			"action": action, "domain": str(c, "domain"), "facts_source": str(c, "facts_source"), "app_project_id": str(c, "app_project_id"),
+			"explanation": explanation,
 		})
 		tx.actorID = modelActor
 		if err != nil {
 			return nil, err
 		}
 		taken, reason := str(recorded.(map[string]any), "action"), str(recorded.(map[string]any), "reason_code")
-		result = map[string]any{"guardrail": "permitted", "action_taken": taken, "reason_code": reason}
+		result = map[string]any{"guardrail": guardrail, "action_taken": taken, "reason_code": reason}
 		if taken == "superseded" {
 			// Nothing was done, and the claim is decided again next tick
 			// (by the rules: this revision had its model case).

@@ -219,10 +219,13 @@ func (w *Watcher) openModelCase(ctx context.Context, pid, kind string, policyRev
 	}
 	matches := []any{}
 	for _, d := range dispatch.ProjectDomains(c.Issue, c.Domains) {
-		matches = append(matches, map[string]any{"domain": d.ID, "by": "project"})
+		// The model has no other way to see trust: the domain's list stays hidden
+		// from it, so the server says whether the claiming session is on it.
+		matches = append(matches, map[string]any{"domain": d.ID, "by": "project", "trusted": dispatch.Trusted(c.Session, d)})
 	}
 	for _, d := range dispatch.LabelDomains(c.Issue, c.Domains) {
-		matches = append(matches, map[string]any{"domain": d.ID, "by": "label"})
+		// A label match never grants trust, so it is never trusted.
+		matches = append(matches, map[string]any{"domain": d.ID, "by": "label", "trusted": false})
 	}
 	permitted := []any{}
 	for _, a := range dispatch.Permitted(c) {

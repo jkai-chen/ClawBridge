@@ -1,3 +1,9 @@
+# Unreleased
+
+## Fixes
+
+- Model mode: the dispatcher's model now sees whether the claiming session is trusted for each matched domain, and a decision whose reason contradicts the facts is recorded with the corrected reason. A model case opened just before the upgrade has no trust flag; a trusted reason on it is treated as contradictory, and the rules decide that claim on the next tick.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

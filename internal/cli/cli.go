@@ -56,7 +56,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           outbox list [--dead] | flush | retry ID | drop ID --confirm drop (writes waiting on this machine),
-          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], version,
+          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], ui [--no-open] [--port N] (the web UI in your browser, on this machine only), version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
           project context-watch show|set --file FILE --expected-revision N,
           project linear-budget show|set CALLS_PER_HOUR|clear (old name: watch-budget),
@@ -299,6 +299,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if rest[0] == "tui" {
 		return runTUI(ctx, flags, rest[1:], stdout, stderr)
+	}
+	if rest[0] == "ui" {
+		return runUI(ctx, flags, rest[1:], stdout, stderr)
 	}
 	// A device's unacknowledged device events print on stderr after any
 	// command it signs (§17.3); the TUI shows them on its Account screen.

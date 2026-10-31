@@ -32,7 +32,12 @@ var browserWait = 5 * time.Second
 // context, reports not opened and no error: the outcome is unknown, so the
 // caller should show the URL. The opener is never killed.
 func LaunchBrowser(ctx context.Context, target string, wait time.Duration) (bool, error) {
-	command := browserCommand(target)
+	return LaunchCommand(ctx, browserCommand(target), wait)
+}
+
+// LaunchCommand starts an opener the caller built, with LaunchBrowser's
+// waiting rules.
+func LaunchCommand(ctx context.Context, command *exec.Cmd, wait time.Duration) (bool, error) {
 	if err := command.Start(); err != nil {
 		return false, errors.New("cannot start the system browser opener")
 	}

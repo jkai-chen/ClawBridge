@@ -655,12 +655,26 @@ webhooks in Linear's UI, and the operator sets the secrets.
    Never use "All public teams": a delivery whose payload names another team
    than its URL is refused `team_mismatch`. Linear then shows the webhook's
    signing secret.
-2. **Set the secrets in your own terminal,** never through an agent, in
-   `/etc/clawbridge/clawbridge.env`:
+2. **Set the secrets in your own terminal,** never through an agent. The
+   line is:
 
    ```text
    CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>[,<team UUID>=<secret>...]
    ```
+
+   From your own computer, `clawbridge cloud secret set
+   CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS` with your route (`--ssh HOST`, `--vm NAME
+   --project P --zone Z`, or `--instance ID --region R`) asks for the whole line
+   at a hidden prompt, checks it the way the server will (and refuses a bad one
+   before it is sent, naming the entry, never the value) and writes it to the
+   env file over your own SSH session. It replaces the line, so to add a team,
+   enter every entry again. It takes a line of up to 4096 bytes, enough for the
+   server's maximum of 32 entries at the length of Linear's signing secrets; a
+   longer line (secrets near the 256-character limit) goes in the env file by
+   hand. Or edit `/etc/clawbridge/clawbridge.env` on the
+   host yourself; if it is a link, edit the file it points to
+   (`sudoedit "$(readlink -f /etc/clawbridge/clawbridge.env)"`), since `sudoedit`
+   refuses a link.
 
    Each secret is 16 to 256 printable ASCII characters with no space or comma,
    and names one team. A team may hold 2 secrets (a rotation) and the line 32.
@@ -673,8 +687,8 @@ webhooks in Linear's UI, and the operator sets the secrets.
    probe-only project, with its webhook and secret set as above:
 
    ```sh
-   ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID
-   ... run --rm --no-deps api operator linear-webhook-probe --confirm --team UUID --forged --public-origin https://HOST
+   ... exec -T api /clawbridge operator linear-webhook-probe --confirm --team UUID
+   ... exec -T api /clawbridge operator linear-webhook-probe --confirm --team UUID --forged --public-origin http://127.0.0.1:8080
    ```
 
    - **The round trip (P1):** as the app, one issue in the team, a comment, the
@@ -694,11 +708,14 @@ webhooks in Linear's UI, and the operator sets the secrets.
      `Linear-Delivery`, which must be one row. It waits about 70 seconds for the
      refusal counters (see below) and checks each was counted. The team's
      secret comes from the server's own environment, never an argument, so run
-     it with `run`, as above.
-   - `--public-origin` is the origin the probe POSTs to. If the container
-     can't reach its own public hostname, use
-     `--public-origin http://127.0.0.1:API_PORT` (http is accepted for a
-     loopback host only).
+     it with `exec` in the running `api` container, as above.
+   - `--public-origin` is the origin the probe POSTs to. Inside the running
+     `api` container, `http://127.0.0.1:8080` is the server itself (http is
+     accepted for a loopback host only). A separate `run --rm` container's
+     loopback is that container, not the server, and Compose publishes only
+     Caddy's ports, so don't use `run` for `--forged`. The public
+     `https://HOST` also works, through Caddy, where the host can reach its
+     own public address.
    - **What it prints:** classes only: whether the `Linear-Delivery` header
      came, the field shapes, the `updatedFrom` key names, the largest payload,
      the timestamp skew, the webhooks query's answer, and per event whether it
@@ -750,7 +767,8 @@ line.
 
 **Keep the secrets out of what you share.** Docker's rendered configuration
 includes the environment, so redact the secrets from any render you show, send
-or paste:
+or paste. This `sed` matches the YAML form only; don't render
+`--format json` once the secrets are set:
 
 ```sh
 docker compose config | sed -E 's/(CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS: ).*/\1<redacted>/'

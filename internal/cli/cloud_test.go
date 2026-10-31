@@ -297,6 +297,43 @@ func TestCloudSecretSetSendsTheValueOnStdinOnly(t *testing.T) {
 	}
 }
 
+// The webhook secrets go on the server like the other keys, over the
+// person's own transport with the value on stdin only, and a line serve would
+// refuse to start with never leaves this machine: the error names the entry,
+// never its value.
+func TestCloudSecretSetWebhookSecrets(t *testing.T) {
+	const key = "CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS"
+	const team, other = "0f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a", "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+	good := team + "=lin_wh_syntheticSecretValue0123," + other + "=lin_wh_anotherSyntheticValue456"
+	calls := stubSecretIO(t, good+"\n", true, nil)
+	out, err := secretSet(key, "--ssh", "admin@bridge.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`
+	if len(*calls) != 1 || !reflect.DeepEqual((*calls)[0].argv, wantSSH("admin@bridge.example.test", "env LC_ALL=C "+script)) || (*calls)[0].stdin != good+"\n" {
+		t.Fatalf("%+v", *calls)
+	}
+	if strings.Contains(strings.Join((*calls)[0].argv, " "), "lin_wh_") || strings.Contains(out, "lin_wh_") {
+		t.Fatalf("value leaked: %q", out)
+	}
+	for name, c := range map[string]struct{ value, want string }{
+		"not TEAM=SECRET": {"lin_wh_syntheticSecretValue0123", "entry 1 is not TEAM_UUID=SECRET"},
+		"short secret":    {team + "=short", "entry 1: a secret is 16-256 characters"},
+		"repeated secret": {team + "=lin_wh_syntheticSecretValue0123," + other + "=lin_wh_syntheticSecretValue0123", "entry 2 repeats a secret"},
+		"three per team":  {team + "=lin_wh_aaaaaaaaaaaaaaaa1," + team + "=lin_wh_aaaaaaaaaaaaaaaa2," + team + "=lin_wh_aaaaaaaaaaaaaaaa3", "entry 3: at most 2 secrets per team"},
+	} {
+		calls := stubSecretIO(t, c.value+"\n", true, nil)
+		_, err := secretSet(key, "--ssh", "admin@bridge.example.test")
+		if err == nil || !strings.Contains(err.Error(), c.want) || len(*calls) != 0 {
+			t.Fatalf("%s: %v, %d calls", name, err, len(*calls))
+		}
+		if strings.Contains(err.Error(), "lin_wh_") || strings.Contains(err.Error(), "short") && name != "short secret" {
+			t.Fatalf("%s: the error names a value: %v", name, err)
+		}
+	}
+}
+
 func TestCloudSecretSetRefusesBadInput(t *testing.T) {
 	key := "CLAWBRIDGE_LINEAR_APP_CLIENT_ID"
 	for name, c := range map[string]struct {
@@ -449,6 +486,7 @@ func TestSecretKeysArePinned(t *testing.T) {
 	want := map[string]bool{
 		"CLAWBRIDGE_LINEAR_APP_CLIENT_ID": true, "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
 		"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID": true, "CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY": true,
+		"CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS": true,
 	}
 	if !reflect.DeepEqual(secretKeys, want) {
 		t.Fatalf("secret set keys: %v", secretKeys)

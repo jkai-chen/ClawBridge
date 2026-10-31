@@ -268,14 +268,16 @@ gives `comments_watermark_reason` instead (see [Linear](../linear.md)). `taskboa
 `description`); a different current value is refused and nothing is sent.
 If Linear's read omits the description, the read has no `description_sha256`
 and a description guard is refused rather than checked against nothing.
-On a server that writes as the ClawBridge app, the guard is checked against the
-app's read; a description with issue mentions can then be refused although
-unchanged, because Linear can return the mention tags differently to the app and
-to the member (a known limit in 1.0). To send it anyway, re-read the issue
-immediately before sending, and send without the guard, with a new `operation_id`,
-only if `updated_at` and the description are unchanged. Send it straight after
-that read: without the guard, an edit made in between would be overwritten.
-Never do this on an issue a person may be editing.
+On a server that writes as the ClawBridge app, Linear can return issue mention
+tags differently to the app and to the member, so the client checks the hash
+against the member's own read just before sending and adds `expected_updated_at`
+(that read's `updated_at`) to the `linear_write` it sends. The server passes the
+guard when its own read's `updated_at` is the same instant, or when the hash
+matches its read; otherwise the update is refused and nothing is sent. Callers
+never send `expected_updated_at` themselves: only the hosted app writer takes it,
+and only a server whose `linear_app_status` answers
+`description_guard_updated_at: true` gets it. An older client sends the hash
+alone, which the server checks against the app's read as before.
 `taskboard_update_v2` also accepts `add_label_ids` and `remove_label_ids` (1–20
 label UUIDs each, not with `label_ids`) to change single labels; the receipt
 lists `labels_added` and `labels_removed`, or reports `observed_unchanged`.

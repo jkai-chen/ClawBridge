@@ -17,7 +17,7 @@ import (
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.ExpectedUpdatedAt == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
 }
 
 // labelPlanV2 is the part of the requested label deltas that would change the
@@ -105,10 +105,16 @@ func descriptionSHA256(description string) string {
 }
 
 // textGuardV2 compares the optional title and description guards with a
-// fresh read of the issue.
+// fresh read of the issue. The description guard passes on its hash, or on
+// an issue unchanged since the client's own read that matched the hash
+// (expected_updated_at): the app and the member can read the same
+// description differently (FR29).
 func textGuardV2(in WriteInputV2, current linearprovider.IssueV2) error {
 	if in.ExpectedTitle != nil && current.Title != *in.ExpectedTitle {
 		return errors.New("issue title differs from expected_title; inspect the current issue")
+	}
+	if sameUpdatedAt(in.ExpectedUpdatedAt, current.UpdatedAt) {
+		return nil
 	}
 	if in.ExpectedDescriptionSHA256 != nil && !current.DescriptionKnown {
 		return errors.New("the current description could not be read, so expected_description_sha256 cannot be checked")
@@ -118,6 +124,18 @@ func textGuardV2(in WriteInputV2, current linearprovider.IssueV2) error {
 	}
 	return nil
 }
+
+// sameUpdatedAt reports whether the issue's updated_at is the expected one,
+// as instants: an unreadable or missing time is never the same.
+func sameUpdatedAt(want *string, got string) bool {
+	if want == nil {
+		return false
+	}
+	a, okA := linearprovider.UpdatedAfterTime(*want)
+	b, okB := linearprovider.UpdatedAfterTime(got)
+	return okA && okB && a.Equal(b)
+}
+
 func ValidateWriteV2(in WriteInputV2) error {
 	if !operationPattern.MatchString(in.OperationID) && !(in.cancelStep && stepOperationPattern.MatchString(in.OperationID)) {
 		return errors.New("write requires operation_id")
@@ -190,6 +208,11 @@ func ValidateWriteV2(in WriteInputV2) error {
 	}
 	if in.ExpectedDescriptionSHA256 != nil && (in.Operation != "update" || in.Description == nil || !sha256Pattern.MatchString(*in.ExpectedDescriptionSHA256)) {
 		return errors.New("expected_description_sha256 applies only to an update that replaces the description, as 64 lowercase hex characters")
+	}
+	if in.ExpectedUpdatedAt != nil {
+		if _, ok := linearprovider.UpdatedAfterTime(*in.ExpectedUpdatedAt); !ok || in.ExpectedDescriptionSHA256 == nil {
+			return errors.New("expected_updated_at applies only with expected_description_sha256, as an RFC 3339 time from the same read")
+		}
 	}
 	if in.TeamID != "" && !linearprovider.ValidID(in.TeamID) {
 		return errors.New("team requires UUID")
@@ -279,6 +302,7 @@ func (s *Service) WriteV2(ctx context.Context, scope bus.Request, in WriteInputV
 			if e != nil {
 				return nil, e
 			}
+			s.guardUpdatedAt(ctx, scope, &in)
 			return s.appWrite(ctx, scope, in.Operation, writeArgsV2(in))
 		}
 		// Through the person's own profile: the project's hourly budget

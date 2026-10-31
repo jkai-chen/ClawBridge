@@ -37,6 +37,8 @@ type appRoute struct {
 	// queues says the server queues a write that can't go now for a
 	// client that accepts it.
 	queues bool
+	// updatedAtGuard says the server takes expected_updated_at (FR29).
+	updatedAtGuard bool
 }
 
 type acceptQueuedKey struct{}
@@ -88,6 +90,7 @@ func (s *Service) appWrites(ctx context.Context) (bool, error) {
 	}
 	s.app.known, s.app.on, s.app.userID = true, true, user
 	s.app.queues = data["queues_writes"] == true
+	s.app.updatedAtGuard = data["description_guard_updated_at"] == true
 	return true, nil
 }
 
@@ -217,6 +220,31 @@ func queuedResult(data map[string]any) (any, error) {
 	return nil, fmt.Errorf("the queued Linear write ended %s (%s); nothing was sent; decide again, and use a new operation_id for a new write", outcome, reason)
 }
 
+// guardUpdatedAt adds expected_updated_at to an app write's description
+// guard when the server takes it (FR29): the server reads the description
+// as the app, which Linear may render differently (issue mention tags), so
+// the hash is checked here against the member's own fresh read, and the
+// server checks only that the issue is unchanged since that read. On any
+// doubt (no read, an unknown description, another hash, no updated_at) the
+// hash goes alone: the server checks it as before and refuses, or replays
+// the receipt of a write already made with this operation_id.
+func (s *Service) guardUpdatedAt(ctx context.Context, scope bus.Request, in *WriteInputV2) {
+	s.app.mu.Lock()
+	on := s.app.updatedAtGuard
+	s.app.mu.Unlock()
+	if !on || in.ExpectedDescriptionSHA256 == nil || in.Operation != "update" {
+		return
+	}
+	current, e := s.IssueV2(ctx, scope, in.IssueID)
+	if e != nil || current.ID != in.IssueID || !current.DescriptionKnown || current.DescriptionSHA256 != *in.ExpectedDescriptionSHA256 {
+		return
+	}
+	if _, ok := linearprovider.UpdatedAfterTime(current.UpdatedAt); ok {
+		at := current.UpdatedAt
+		in.ExpectedUpdatedAt = &at
+	}
+}
+
 // writeArgsV2 is the linear_write argument map for a create, update or
 // comment: what parseWriteArgsV2 reads back into the same input.
 func writeArgsV2(in WriteInputV2) map[string]any {
@@ -226,7 +254,7 @@ func writeArgsV2(in WriteInputV2) map[string]any {
 			args[key] = value
 		}
 	}
-	for key, value := range map[string]*string{"title": in.Title, "description": in.Description, "state_id": in.StateID, "expected_title": in.ExpectedTitle, "expected_description_sha256": in.ExpectedDescriptionSHA256} {
+	for key, value := range map[string]*string{"title": in.Title, "description": in.Description, "state_id": in.StateID, "expected_title": in.ExpectedTitle, "expected_description_sha256": in.ExpectedDescriptionSHA256, "expected_updated_at": in.ExpectedUpdatedAt} {
 		if value != nil {
 			args[key] = *value
 		}

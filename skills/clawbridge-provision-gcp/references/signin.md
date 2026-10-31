@@ -17,7 +17,8 @@ clawbridge cloud bootstrap --help
 
 Then:
 
-- **Env file (step 6):** leave `CLAWBRIDGE_AUTH` unset, or set it to `device`.
+- **Env file (step 6):** `CLAWBRIDGE_AUTH=device`, set explicitly in the settings block: a release before 1.0
+  defaults it to `google`, which needs Google settings this playbook doesn't create.
   Never set `google`, `CLAWBRIDGE_AUDIENCE` or any `CLAWBRIDGE_OAUTH_*` entry:
   `google` stops the server, and the old Google settings are ignored with a
   warning (`clawbridge cloud check server` warns while one is there). The

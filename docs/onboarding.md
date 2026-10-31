@@ -184,7 +184,7 @@ earlier ones:
    the task board names no Linear projects, the step is skipped with the reason.
    The default is no. `clawbridge dispatcher disable` turns it off any time.
    Model mode is set up separately (see
-   [the dispatcher](dispatcher.md#model-mode-designed-partly-built)). For a
+   [the dispatcher](dispatcher.md#model-mode)). For a
    member it prints `skipped: the project owner sets the dispatcher` and asks
    nothing; for anyone else it is skipped, with the reason.
 

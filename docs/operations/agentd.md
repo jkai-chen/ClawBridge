@@ -35,7 +35,7 @@ The repository's files: `deploy/systemd/agentd/` (the two units, `delegate.conf`
 - **The server's address** must be public HTTPS: the agents reach it through the egress proxy, which allows public
   addresses only, unless it is listed with `CLAWBRIDGE_EGRESS_PRIVATE_SERVER` (the README).
 - **The images,** the agent's and agentd's (agentd's is also the egress proxy's). Either:
-  - **published (the default):** each release publishes both, attested, and names their digests in its assets
+  - **published (the default):** each release from 1.0 publishes both, attested, and names their digests in its assets
     `AGENT-IMAGE-DIGEST.txt` (`ghcr.io/jkai-chen/clawbridge-dispatcher-agent@sha256:…`) and `AGENTD-IMAGE-DIGEST.txt`
     (`ghcr.io/jkai-chen/clawbridge-agentd@sha256:…`). Verify each on any machine with `gh`:
     `gh attestation verify oci://<that line> --repo jkai-chen/ClawBridge --signer-workflow

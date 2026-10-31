@@ -183,9 +183,10 @@ clawbridge self-update --version vX.Y.Z
 - **Attestation.** `--verify-attestation`, or `CLAWBRIDGE_VERIFY=required` as for the
   installers, also checks the download's build provenance, and a binary that fails is not
   installed. Without it the output says `build provenance: not checked`.
-  - **v0.3.13 and later** publish the provenance as the release asset
-    `PROVENANCE.sigstore.json`, and the client verifies it in-process, with no `gh`, API
-    call or token: the Sigstore certificate and transparency-log entry, the release
+  - **Releases from v0.3.13** publish the provenance as the release asset
+    `PROVENANCE.sigstore.json`. **A v1.0 client** verifies it in-process, with no `gh`, API
+    call or token (a client older than v1.0 runs `gh attestation verify`, so `gh` must be on
+    PATH): the Sigstore certificate and transparency-log entry, the release
     workflow at exactly that tag, the binary's name and SHA-256, and SLSA provenance v1.
     The output says `build provenance: verified (the release's Sigstore bundle, checked
     in-process)`.

@@ -286,8 +286,8 @@ differs, stop and ask (rule 5).
 ## 6. Install the server
 
 **The env file,** created once, root-only. The database password is generated
-here and never printed. Add the sign-in lines from [signin.md](signin.md) for
-the chosen path (the device path adds `CLAWBRIDGE_AUTH=device`). On AWS the
+here and never printed. It sets `CLAWBRIDGE_AUTH=device` explicitly
+([signin.md](signin.md)): a release before 1.0 defaults it to `google`. On AWS the
 backups go to S3, named by `CLAWBRIDGE_BACKUP_URL` and
 `CLAWBRIDGE_BACKUP_REGION`:
 
@@ -300,6 +300,7 @@ else
   printf "POSTGRES_PASSWORD=%s\n" "$(openssl rand -hex 32)"
   printf "CLAWBRIDGE_DOMAIN=%s\n" DOMAIN
   printf "CLAWBRIDGE_BOOTSTRAP_OWNER=%s\n" OWNER_EMAIL
+  printf "CLAWBRIDGE_AUTH=device\n"
   printf "CLAWBRIDGE_POSTGRES_DATA_PATH=/var/lib/clawbridge-postgres/data\n"
   printf "CLAWBRIDGE_BACKUP_URL=s3://%s\n" BUCKET
   printf "CLAWBRIDGE_BACKUP_REGION=%s\n" REGION

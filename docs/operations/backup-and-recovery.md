@@ -90,7 +90,7 @@ The env file names the store in one of two ways, never both:
 
 A missing, duplicated or malformed setting stops the runner before it dumps anything.
 
-### S3-compatible storage (a server you reach over SSH)
+### S3-compatible storage (a server you reach over SSH, from 1.0)
 
 On a host that is neither Google Cloud nor AWS, backups go to S3-compatible object storage **off the host**. A copy on
 the same host or disk isn't a backup, so a server's runner never writes one there. (A server on your own machine

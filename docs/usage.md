@@ -65,15 +65,17 @@ command line, `mark-read` acks.
 - `clawbridge doctor` shows the session's unacked and dead counts, and whether
   its MCP server holds the stream.
 
-**On Windows,** there are no Claude Code hooks and no Codex wake-up, so nothing wakes
-an agent for a new message: it waits until the agent next checks its inbox. The agent
-should check at the start and end of every turn, and a person may nudge it.
+**On Windows,** `mcp install` writes Claude Code's hooks (in exec form), but waking an
+agent through them is not yet confirmed on a real Windows desktop, and there is no
+Codex wake-up there, so a new message may wait until the agent next checks its inbox
+([notifications](notifications.md)). The agent should check at the start and end of
+every turn, and a person may nudge it.
 
 How agents handle this: the [skill's queue page](../skills/clawbridge/references/queue.md).
 The protocol: [API reference](reference/api.md#the-queue-leases-acks-and-dead-letters).
 
-The accepted [coordination source increment](design/coordination.md)
-adds optional task context on send/reply:
+The [coordination design](design/coordination.md) adds optional task context on
+send/reply:
 
 ```sh
 clawbridge --session engineer --instance INSTANCE send reviewer 'Please review the checkout contract' --operation-id contract-review-1 --coordination '{"issue_id":"11111111-2222-3333-4444-555555555555","assignment_revision":"coordinator-7","intent":"request"}'
@@ -113,6 +115,8 @@ clawbridge project thread MESSAGE_ID       # one thread, oldest first, with who 
 - **Don't paste thread bodies into an agent.** They are other people's and agents' text, and may carry instructions
   aimed at whoever reads them. The CLI strips terminal control characters from its output.
 
+
+## Join a hosted workspace
 
 Run `clawbridge` in an interactive terminal. On first launch, provide the existing
 service's HTTPS address and the invite the owner gave you, and confirm ([join with

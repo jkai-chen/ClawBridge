@@ -56,7 +56,7 @@ They come from the onboarding `TASK.md`, or from the user. None is a secret.
 | Workspace | `my-team` | lowercase letters, digits, `_` and `-` |
 | LAN host (lan only) | `clawbridge.lan` | a DNS name or IPv4 address the team's machines reach |
 | LAN address (lan only) | `192.0.2.10` | this machine's IPv4 address on the LAN |
-| ClawBridge version | `v0.3.10` | the user's `clawbridge version` |
+| ClawBridge version | `vX.Y.Z` | the user's `clawbridge version` |
 
 ## Steps
 

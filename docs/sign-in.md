@@ -17,7 +17,7 @@ Google sign-in was removed ([Removing Google sign-in](operations/google-sign-in-
 >   `device add` link, new-device alerts and dormant devices; its server and
 >   client come together.
 > - **v1.0 removes Google sign-in**: device keys are the only sign-in, on the
->   server and the client ([Device keys only](#turning-device-sign-in-on)).
+>   server and the client ([Device keys only](#device-keys-only-v10)).
 >
 > A v0.3.4 client can't join a server with device keys: install v0.3.5 or later
 > first ([install and update](installation.md)).
@@ -29,7 +29,7 @@ Google sign-in was removed ([Removing Google sign-in](operations/google-sign-in-
 - [Your devices](#your-devices)
 - [Members and ownership](#members-and-ownership)
 - [The operator's bootstrap invite](#the-operators-bootstrap-invite)
-- [Device keys only (v1.0)](#turning-device-sign-in-on)
+- [Device keys only (v1.0)](#device-keys-only-v10)
 - [Troubleshooting](#troubleshooting)
 
 ## How it works
@@ -332,7 +332,7 @@ clawbridge operator bootstrap-invite --workspace WORKSPACE
 The Compose form and the details are in
 [Deployment: letting the owner in](operations/deployment.md#letting-the-owner-in-operator-bootstrap-invite).
 
-## Turning device sign-in on
+## Device keys only (v1.0)
 
 **Since v1.0 a server takes device keys only.** `CLAWBRIDGE_AUTH` in its
 environment file (`serve --auth`) is `device`, or unset, which is `device` too:

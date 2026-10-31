@@ -901,13 +901,14 @@ Keep the repository and environment file in a private deployment directory such 
 `/opt/clawbridge/repo`. Rebuild and recreate the API after every application commit;
 restarting a VM only restarts the existing container image.
 
-### The dispatcher model's launcher (optional, groundwork)
+### The dispatcher model's launcher (optional)
 
 An owner's model provider key is stored sealed, and handed only to that owner's
 agent container, which `clawbridge-agentd` starts on the host. The server side
-ships here; nothing runs an agent until agentd is installed with a launcher token.
+is in the server; nothing runs an agent until agentd is installed with a launcher token. Model mode is not yet
+proven on a hosted server (a known limit of 1.0).
 Installing agentd, its rootless Docker and its units is in [agentd.md](agentd.md).
-Each release also publishes the agent's and agentd's (egress) images, attested,
+Each release from 1.0 also publishes the agent's and agentd's (egress) images, attested,
 with their digests in the assets `AGENT-IMAGE-DIGEST.txt` and
 `AGENTD-IMAGE-DIGEST.txt`; agentd pins them in that `name@sha256:…` form, and an
 image built and loaded offline is pinned by its ID instead (agentd.md).
@@ -966,7 +967,7 @@ CLAWBRIDGE_DISPATCHER_MODEL_MAX_AGENTS=1                  # optional, 1-20; 1 is
   mint for a restarted agent, and the project tokens its agent redeems) counts
   as known: one revoked agent that keeps failing can't keep a restarted one
   out. An agent stops when its own credential is refused. Create it on the host, straight into a new env file for agentd,
-  as [agentd.md](agentd.md#the-launcher-token) shows: the api image runs as
+  as [agentd.md](agentd.md#3-the-launcher-token) shows: the api image runs as
   `nonroot` (uid 65532), so it writes into a one-run directory it owns, and root
   moves the file into place.
 
@@ -1189,6 +1190,9 @@ Nothing here is configured; what it costs and how to watch it:
   dead letter, until it accepts again. `clawbridge doctor` shows it.
 
 ## Update and rollback
+
+**v1.0: read [Upgrading to 1.0](../upgrading-to-1.0.md) first.** Every member moves to a device key and the server to
+`CLAWBRIDGE_AUTH=device` before the deploy ([sign-in methods](#sign-in-methods)); no schema change from v0.3.13.
 
 **v0.3.9 (schema 47 → 50): one-way, and four things to check.**
 - **Schema.** v0.3.9 migrates to schema 50 on its first start (48 the server drain, 49 the

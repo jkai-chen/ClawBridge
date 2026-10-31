@@ -1,4 +1,4 @@
-# The dispatcher (in progress)
+# The dispatcher
 
 The dispatcher is an optional coordinator for projects on a hosted ClawBridge server. It confirms claims from
 sessions you trust, routes notices to the right person, and releases claims abandoned for a long time. Everything else
@@ -132,7 +132,7 @@ clawbridge dispatcher disable --expected-revision N
   revision.
 - **Linking first:** the task board must be linked before enable.
 - **`--engine`:** `rules` (the default) or `model`. Model mode is refused until your model setup has passed its test
-  (see [Model mode](#model-mode-designed-partly-built)), so on main today only `rules` can be turned on.
+  (see [Model mode](#model-mode)); then `--engine model` works.
 - **The preview** shows:
   - the coordinator the dispatcher replaces;
   - the two reserved sessions it creates;
@@ -169,14 +169,16 @@ appears in session lists, and neither can receive messages. People's sessions ca
 Each may run only a fixed list of operations, enforced by the server. Neither may change a policy, the binding,
 labels, roles or intake, or do any Linear administration.
 
-## Model mode (designed, partly built)
+## Model mode
 
 In model mode a language model decides claims **within the same guardrails** as the rules, and the rules are the
 fallback. The model can only choose among the actions the rules engine's guardrails already permit, so it can be more
 careful than the rules (wait or escalate where they would confirm), but it can never grant more. The rules engine
 stays the default and needs no model.
 
-Status: in a release, on main (not released yet), in review, or planned.
+Status: the release each part came in. **Not yet proven on a hosted server:** rules mode runs on hosted servers;
+model mode is tested against a stand-in model provider, and a real provider key on a hosted server has not been run
+yet (a known limit of 1.0, in the release notes).
 
 | Part | Status |
 |---|---|
@@ -191,14 +193,12 @@ Status: in a release, on main (not released yet), in review, or planned.
 | The egress proxy's own image, images pinned by ID, and agentd's units and install check | v0.3.6 |
 | A guided `dispatcher model setup` in the CLI, with the provider's model list | v0.3.6 |
 | The same setup in the TUI (the Dispatcher screen, `6`) | v0.3.6 |
-| `dispatcher model key rotate`, and how the model is used on the Dispatcher screen | in review |
-| The loop budget (`dispatcher model budget`) and decision kinds (`dispatcher decisions --kind`) | in review |
-| Structured escalations and `dispatcher escalation answer` | in review |
-| Judging again (`dispatcher model rejudge`) | in review |
-| CI against a real rootless Docker daemon, one model agent by default, and agentd's measured cost in `doctor` | in review |
-| Deployment of the launcher | planned |
-
-The design is in this section so that owners can judge it before it ships.
+| `dispatcher model key rotate`, and how the model is used on the Dispatcher screen | v0.3.11 |
+| The loop budget (`dispatcher model budget`) and decision kinds (`dispatcher decisions --kind`) | v0.3.13 |
+| Structured escalations and `dispatcher escalation answer` | v0.3.13 |
+| Judging again (`dispatcher model rejudge`) | v0.3.13 |
+| CI against a real rootless Docker daemon, one model agent by default, and agentd's measured cost in `doctor` | v0.3.11 |
+| Deployment of the launcher ([agentd](operations/agentd.md)) | v0.3.6 |
 
 ### Setting up your model
 
@@ -374,8 +374,8 @@ A project owner can ask the model a question from their own terminal, with no se
   - It is printed only to the asker's terminal, with terminal control characters and bidirectional overrides removed.
   - It never reaches an inbox or a session, and nothing in it is acted on.
   - To act, use the CLI's own commands.
-- **Retention:** questions and replies are kept with the case, like other cases. There is no purge yet; a retention
-  policy is planned before v1.0.
+- **Retention:** questions and replies are kept with the case, like other cases. There is no purge in 1.0; a retention
+  policy is planned.
 
 ### Advice in rules mode, and the opt-in tools
 

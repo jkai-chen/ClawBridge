@@ -57,11 +57,18 @@ func TestBootstrapInviteCodeStdinRefuses(t *testing.T) {
 		"not-a-code-zzzz\n":         {"--code-stdin"},
 		"":                          {"--code-stdin"},
 		"CBJ-ABCD-EFGH-JKMN-PQRS\n": {"--code-stdin", "--force-stdout"},
+		// S5-06: a wrong guess burns no invite, so a code of a weaker shape
+		// than clawbridge's own is refused, and never echoed.
+		"CBJ-ABCD-EFGH-JKMN\n":      {"--code-stdin"},
+		"CBJ-ABCD-EFGH-JKMN-PQRU\n": {"--code-stdin"},
+		"CBJ ABCD EFGH JKMN PQRS\n": {"--code-stdin"},
+		"CBJ-7777-7777-7777-7777\n": {"--code-stdin"},
+		"cbj-abcd-efgh-jkmn-pqrs\n": {"--code-stdin"},
 	} {
 		operatorStdin = strings.NewReader(stdin)
 		var out bytes.Buffer
 		err := RunOperator(context.Background(), append([]string{"bootstrap-invite", "--workspace", "acme"}, args...), &out)
-		if err == nil || out.Len() != 0 || strings.Contains(err.Error(), "zzzz") || strings.Contains(err.Error(), "unused.invalid") || strings.Contains(err.Error(), "Postgres") {
+		if err == nil || out.Len() != 0 || strings.Contains(err.Error(), "zzzz") || strings.Contains(err.Error(), "7777") || strings.Contains(err.Error(), "ABCD") || strings.Contains(err.Error(), "PQR") || strings.Contains(err.Error(), "unused.invalid") || strings.Contains(err.Error(), "Postgres") {
 			t.Fatal(args, err, out.String())
 		}
 	}
@@ -127,7 +134,7 @@ func TestPostgresBootstrapInviteJoinsTheOwner(t *testing.T) {
 	// cloud bootstrap's way: the code it made, on stdin; one JSON line
 	// back, without it, to any output.
 	mine := devicekey.NewCode()
-	operatorStdin = strings.NewReader(strings.ToLower(mine) + "\n")
+	operatorStdin = strings.NewReader(mine + "\n")
 	t.Cleanup(func() { operatorStdin = os.Stdin })
 	stdoutIsTerminal = func(io.Writer) bool { return false }
 	var given bytes.Buffer

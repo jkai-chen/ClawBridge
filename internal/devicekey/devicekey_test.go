@@ -1,6 +1,7 @@
 package devicekey
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"strings"
 	"testing"
@@ -72,5 +73,44 @@ func TestSignedBases(t *testing.T) {
 	got = string(JoinProofBase("https://cb.example.com", "ada@example.com", "0000000000000000", "1761498000"))
 	if !strings.HasPrefix(got, "clawbridge-join-v1\nhttps://cb.example.com\nada@example.com\n") || strings.Contains(got, "0000000000000000") || !strings.HasSuffix(got, "\n1761498000") {
 		t.Fatalf("%q", got)
+	}
+}
+
+// A caller-chosen code must be as strong as NewCode's: its exact shape, and
+// not patterned. Every refusal leaves the code out of its text.
+func TestStrongCode(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		if c := NewCode(); !StrongCode(c) {
+			t.Fatal("NewCode refused:", c)
+		}
+	}
+	for name, code := range map[string]string{
+		"too short":        "CBJ-ABCD-EFGH-JKMN",
+		"too long":         "CBJ-ABCD-EFGH-JKMN-PQRS-TVWX",
+		"wrong alphabet":   "CBJ-ABCD-EFGH-JKMN-PQRU",
+		"look-alike":       "CBJ-ABCD-EFGH-JKMN-PQRO",
+		"lower case":       "cbj-abcd-efgh-jkmn-pqrs",
+		"wrong separators": "CBJ ABCD EFGH JKMN PQRS",
+		"no separators":    "CBJ-ABCDEFGHJKMNPQRS",
+		"no prefix":        "ABCD-EFGH-JKMN-PQRS",
+		"one character":    "CBJ-AAAA-AAAA-AAAA-AAAA",
+		"zeros":            "CBJ-0000-0000-0000-0000",
+		"two characters":   "CBJ-ABAB-ABAB-ABAB-ABAB",
+		"empty":            "",
+	} {
+		if StrongCode(code) {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// NewCode redraws a code StrongCode would refuse, so a generated code always
+// passes: the first ten bytes here encode to sixteen zeros.
+func TestNewCodeRedrawsWeakDraw(t *testing.T) {
+	good := []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x13, 0x57}
+	r := bytes.NewReader(append(make([]byte, 10), good...))
+	code := newCodeFrom(r)
+	if !StrongCode(code) || r.Len() != 0 || strings.Contains(code, "0000") {
+		t.Fatal("not redrawn:", code, r.Len())
 	}
 }

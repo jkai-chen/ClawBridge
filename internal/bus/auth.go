@@ -1232,8 +1232,8 @@ func (s *Store) OperatorBootstrapInvite(ctx context.Context, workspace, owner, c
 	}
 	given := code != ""
 	if given {
-		if _, ok := devicekey.NormalCode(code); !ok {
-			return nil, errors.New("the given code is not an invite code (CBJ- and 16 letters and digits)")
+		if !devicekey.StrongCode(code) {
+			return nil, errors.New(devicekey.ErrWeakCode)
 		}
 	}
 	owner = normalPrincipal(owner)

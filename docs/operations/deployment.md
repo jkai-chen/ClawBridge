@@ -412,6 +412,12 @@ sudo docker compose --env-file /etc/clawbridge/clawbridge.env --project-name "$P
   the audit records the invite, not the code.
 - **`--code-stdin`:** the caller made the code and passes it on stdin; the server
   stores only its salted hash and prints the invite as one JSON line without it.
+  The code must be one `clawbridge` generated, or the same form (`CBJ-` and four
+  groups of four upper-case characters from `0-9` and `A-Z` without `I`, `L`, `O`
+  and `U`) drawn from a cryptographic random generator; the command refuses any
+  other, without echoing it. A wrong guess at an invite code doesn't burn the invite
+  (only the per-address failed-sign-in limit slows guessing), so the code's
+  strength is what protects it.
   This is how `clawbridge cloud bootstrap --instance` lets the owner in on AWS from
   their own machine: it makes the code there, hands it to this command through a
   short-lived Parameter Store `SecureString` (as `cloud secret set` does), so it is

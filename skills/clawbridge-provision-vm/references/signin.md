@@ -14,6 +14,8 @@ clawbridge cloud bootstrap --help
 - **It doesn't:** the release predates this route. Ask the user to update
   ClawBridge first, then start again. The server must run the same release or
   newer, since its `operator bootstrap-invite` takes the code.
+  The code must be one `clawbridge` generated (the server refuses a weaker one), so
+  never make one by hand.
 
 ## Device path
 

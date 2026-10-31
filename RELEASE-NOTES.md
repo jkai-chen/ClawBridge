@@ -1,3 +1,9 @@
+# Unreleased
+
+## Operations
+
+- **Two settings are reserved for the coming Linear app webhook, and do nothing yet.** `CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET` (one secret, or two comma-separated during a rotation; needs the Linear app) and `CLAWBRIDGE_APP_WEBHOOK_PROVEN` (`serve --app-webhook-proven`) are recognised and checked at start, and a bad secret refuses the start without showing it. No route reads them, so setting them changes nothing.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

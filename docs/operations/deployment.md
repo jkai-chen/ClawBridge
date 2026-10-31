@@ -762,6 +762,13 @@ run `grep -rn 'CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS' docs deploy | grep -v redact`.
 Every hit should be the key's name or the env line's shape with `<secret>`,
 never a value.
 
+**Reserved for the coming app-level webhook (no effect yet).**
+`CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET` (one secret, or two comma-separated for a
+rotation; 16 to 256 printable ASCII characters with no space or comma; needs the
+Linear app) and `CLAWBRIDGE_APP_WEBHOOK_PROVEN` (`1` or `0`) are recognised and
+checked at start, and a bad secret refuses the start. Nothing reads them yet, so
+setting them changes nothing and adds no route.
+
 ### The server watcher (optional, v0.3)
 
 With the Linear app configured, the server can run the comment watch, claim

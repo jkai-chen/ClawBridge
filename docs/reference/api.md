@@ -268,6 +268,14 @@ gives `comments_watermark_reason` instead (see [Linear](../linear.md)). `taskboa
 `description`); a different current value is refused and nothing is sent.
 If Linear's read omits the description, the read has no `description_sha256`
 and a description guard is refused rather than checked against nothing.
+On a server that writes as the ClawBridge app, the guard is checked against the
+app's read; a description with issue mentions can then be refused although
+unchanged, because Linear can return the mention tags differently to the app and
+to the member (a known limit in 1.0). To send it anyway, re-read the issue
+immediately before sending, and send without the guard, with a new `operation_id`,
+only if `updated_at` and the description are unchanged. Send it straight after
+that read: without the guard, an edit made in between would be overwritten.
+Never do this on an issue a person may be editing.
 `taskboard_update_v2` also accepts `add_label_ids` and `remove_label_ids` (1–20
 label UUIDs each, not with `label_ids`) to change single labels; the receipt
 lists `labels_added` and `labels_removed`, or reports `observed_unchanged`.

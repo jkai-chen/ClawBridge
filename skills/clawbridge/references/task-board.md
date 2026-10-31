@@ -350,6 +350,14 @@ Title and description replace the whole text, so a concurrent human edit would
 be lost. When you replace them, send the title you read as `expected_title` and
 the issue read's `description_sha256` as `expected_description_sha256`; on a
 refusal, re-read, merge the human's change and retry with a new `operation_id`.
+If the re-read shows the same `updated_at` and description and the description
+mentions issues, the refusal is a known 1.0 limit on servers that write as the
+ClawBridge app (mention tags read differently). Only if no person may be editing
+the issue: re-read it immediately before sending, and if `updated_at` and the
+description are still unchanged, send the update without
+`expected_description_sha256`, with a new `operation_id`. Send it straight after
+that read: without the guard, an edit made in between would be overwritten.
+Otherwise ask a person.
 To add or remove one label without touching the others, send
 `add_label_ids` or `remove_label_ids` instead of `label_ids`; no expected set is
 needed. A label already in the requested state is left alone (the receipt says

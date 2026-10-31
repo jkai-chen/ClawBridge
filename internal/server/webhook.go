@@ -483,6 +483,14 @@ func cachedOrgID(fetch func(context.Context) (string, error), now func() time.Ti
 	}
 }
 
+// CheckWebhookSecrets reports whether raw is a CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS
+// value serve would start with, so cloud secret set refuses a bad one before
+// it reaches the env file. The error names the entry, never its value.
+func CheckWebhookSecrets(raw string) error {
+	_, err := parseWebhookSecrets(raw)
+	return err
+}
+
 // parseWebhookSecrets reads CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS:
 // TEAM_UUID=SECRET entries, comma-separated, at most 2 per team and 32 in
 // all. A secret is 16-256 printable ASCII characters with no space or

@@ -1,0 +1,15 @@
+{
+  "description": "hello reports versions, mode, platform and the profile summary",
+  "request": {"jsonrpc": "2.0", "id": 1, "method": "hello", "params": {"gui_version": "0.1.0"}},
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "client_version": "1.0.0-test",
+      "protocol": 1,
+      "mode": "local",
+      "platform": "linux",
+      "profile": {"workspace": "ws_example", "project": "prj_example", "waiting_for_project": false}
+    }
+  }
+}

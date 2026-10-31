@@ -132,11 +132,11 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 			if res.StatusCode == http.StatusBadRequest && parsed {
 				for _, e := range envelope.Errors {
 					if queryRejected(e.Message, e.Extensions.Code, e.Extensions.Type) {
-						return fail("query_invalid")
+						return &Error{Code: "query_invalid", Field: rejectedField(e.Message)}
 					}
 				}
 			}
-			return fail("unavailable")
+			return &Error{Code: "unavailable", Status: res.StatusCode}
 		}
 		if !parsed {
 			return fail("query_failed")
@@ -148,7 +148,7 @@ func (a *App) GraphQL(ctx context.Context, query string, variables map[string]an
 		}
 		for _, e := range envelope.Errors {
 			if queryRejected(e.Message, e.Extensions.Code, e.Extensions.Type) {
-				return fail("query_invalid")
+				return &Error{Code: "query_invalid", Field: rejectedField(e.Message)}
 			}
 		}
 		if len(envelope.Errors) > 0 || len(envelope.Data) == 0 {
@@ -177,6 +177,19 @@ func queryRejected(message, code, kind string) bool {
 		return true
 	}
 	return message == "Argument Validation Error"
+}
+
+// fieldNamed finds the identifier in quotes in a validation message, such
+// as `Cannot query field "toDelegate" on type "IssueHistory"`.
+var fieldNamed = regexp.MustCompile(`(?:[Ff]ield|argument|Argument) "([A-Za-z_][A-Za-z0-9_]{0,63})"`)
+
+// rejectedField is the schema identifier a validation message names, or "".
+// Only a match of that exact shape is kept, never the message.
+func rejectedField(message string) string {
+	if m := fieldNamed.FindStringSubmatch(message); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // entityNotFound: Linear could not find, or would not show the app, an

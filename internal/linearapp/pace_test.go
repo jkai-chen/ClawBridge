@@ -190,3 +190,32 @@ func TestGraphQLEntityNotFoundIsMarked(t *testing.T) {
 		}
 	}
 }
+
+// A validation error keeps the schema identifier it names, and an
+// unavailable answer its HTTP status, and nothing else of Linear's text.
+func TestGraphQLErrorKeepsFieldAndStatus(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	for i, c := range []struct {
+		status int
+		body   string
+		code   string
+		field  string
+		http   int
+	}{
+		{400, `{"errors":[{"message":"Cannot query field \"toDelegate\" on type \"IssueHistory\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "query_invalid", "toDelegate", 0},
+		{200, `{"data":null,"errors":[{"message":"Field \"bad field\" is not defined","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "query_invalid", "", 0},
+		{502, `bad gateway`, "unavailable", "", 502},
+	} {
+		g := &limitedGQL{linear: &linear{app: true}, answers: []limitedAnswer{{status: c.status, body: c.body}}}
+		a, _ := New(Config{ClientID: fmt.Sprintf("client-field-%d-%s", i, t.Name()), Secret: secret, Key: key, Store: &memStore{live: map[string]int{}}, HTTP: &http.Client{Transport: g}, Now: func() time.Time { return now }})
+		var out struct{ Issue struct{ ID string } }
+		err := a.GraphQL(context.Background(), `{ issue(id: "x") { id } }`, nil, &out)
+		var e *Error
+		if !errors.As(err, &e) || e.Code != c.code || e.Field != c.field || e.Status != c.http {
+			t.Fatal(i, err, e)
+		}
+		if strings.Contains(err.Error(), "toDelegate") || strings.Contains(err.Error(), "gateway") {
+			t.Fatal("Linear's text leaked:", err)
+		}
+	}
+}

@@ -77,6 +77,13 @@ type Error struct {
 	// entity-not-found: the entity is missing or hidden from the app. No
 	// Linear text is kept.
 	NotFound bool
+	// Field is the schema identifier a query_invalid error names (a field
+	// the query asked for that Linear's schema lacks), when it names one in
+	// the shape of an identifier. Never any other Linear text.
+	Field string
+	// Status is the HTTP status of an unavailable answer, 0 when the call
+	// got none.
+	Status int
 }
 
 // IsNotFound reports a query Linear answered with entity-not-found only.

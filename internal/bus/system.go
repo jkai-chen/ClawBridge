@@ -350,10 +350,50 @@ func (s *Store) IntakeCursorSet(ctx context.Context, pid, source, subject, polle
 	return tx.Commit()
 }
 
+// intakeRetryWait is how soon a source with pending candidates is read
+// again.
+const intakeRetryWait = 2 * time.Minute
+
+// IntakeCursorSoon brings a source's next poll forward to intakeRetryWait
+// from now, over the hourly or quarter-hour wait IntakeCursorSet chose,
+// because a candidate's history had not caught up. It never delays a poll,
+// and the next IntakeCursorSet sets the usual wait again.
+func (s *Store) IntakeCursorSoon(ctx context.Context, pid, source, subject string) error {
+	if !strings.HasPrefix(source, "intake-") {
+		return invalid("not an intake source")
+	}
+	tx, _, err := s.systemTx(ctx, pid)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now, err := dbStamp(ctx, tx)
+	if err != nil {
+		return err
+	}
+	soon := layout(at(now).Add(intakeRetryWait))
+	if _, err = tx.ExecContext(ctx, `UPDATE watch_cursors SET next_poll_at=?,updated_at=? WHERE project_id=? AND source=? AND subject=? AND next_poll_at>?`, soon, now, pid, source, subject, soon); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // IntakeEnqueueSystem queues one event from the server's intake watcher.
 // A transition at or before its issue's closed row's close counts only
 // after a rearm (§3.5, IN2-L2).
 func (s *Store) IntakeEnqueueSystem(ctx context.Context, pid string, ev IntakeEvent) (string, error) {
+	return s.intakeEnqueueSystem(ctx, pid, ev, false)
+}
+
+// IntakeEnqueueNew is IntakeEnqueueSystem for a fallback that has no proof
+// of a transition: it queues the issue only when the project has no queue
+// row for it in any state, and says "has_row" otherwise. A dismissed or
+// closed item is never reopened by it, and a queued one never changes.
+func (s *Store) IntakeEnqueueNew(ctx context.Context, pid string, ev IntakeEvent) (string, error) {
+	return s.intakeEnqueueSystem(ctx, pid, ev, true)
+}
+
+func (s *Store) intakeEnqueueSystem(ctx context.Context, pid string, ev IntakeEvent, onlyNew bool) (string, error) {
 	tx, p, err := s.systemTx(ctx, pid)
 	if err != nil {
 		return "", err
@@ -369,6 +409,9 @@ func (s *Store) IntakeEnqueueSystem(ctx context.Context, pid string, ev IntakeEv
 	rows, err := query(ctx, tx, `SELECT state,closed_at,rearmed FROM intake_queue WHERE project_id=? AND issue_uuid=?`, pid, ev.Issue.UUID)
 	if err != nil {
 		return "", err
+	}
+	if onlyNew && len(rows) > 0 {
+		return "has_row", nil
 	}
 	if len(rows) == 1 && rows[0]["closed_at"] != nil && asInt(rows[0]["rearmed"]) == 0 {
 		// Linear's and the bus's time formats differ: compare instants.

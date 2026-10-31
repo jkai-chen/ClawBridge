@@ -69,6 +69,10 @@
   an issue is queued untrusted. No schema change. Linear config scope: none.
 - Dispatcher: an untrusted session's claim, from a session no project domain trusts, is escalated at once, even when
   the session looks idle, instead of waiting out the idle window. No schema change. Linear config scope: none.
+- Model mode: the dispatcher's model now sees whether the claiming session is trusted for each matched domain, and a
+  decision whose reason contradicts the facts is recorded with the corrected reason. A model case opened just before the
+  upgrade has no trust flag; a trusted reason on it is treated as contradictory, and the rules decide that claim on the
+  next tick. No schema change. Linear config scope: none.
 
 ## Docs
 

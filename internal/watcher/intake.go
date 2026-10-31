@@ -852,6 +852,11 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 					return true
 				}
 				switch {
+				case signal == "S1" && labelled && info.OnlyCreator && info.Creator != r.app.AppUserID && newIssue(info.CreatedAt, issue.UpdatedAt) && info.Entries == 0 && !creatorQuiet(info.CreatedAt, issue.UpdatedAt):
+					// No entry at all is also what a lagging history looks
+					// like, and the issue changed after its creation: the
+					// actor is unproven.
+					r.fallback(ctx, signal, name, issue, "creator_unproven", "empty_history")
 				case signal == "S1" && labelled && info.OnlyCreator && info.Creator != r.app.AppUserID && newIssue(info.CreatedAt, issue.UpdatedAt):
 					r.creatorQueue(ctx, signal, name, issue, info.Creator, info.CreatedAt)
 				case signal == "S2":
@@ -953,10 +958,27 @@ func newIssue(createdAt, updatedAt string) bool {
 	return err == nil && !c.Before(u.Add(-intakeLag))
 }
 
+// creatorQuietBound is how long after its creation an issue may last have
+// changed for an empty history to show the creator set the label: the label
+// at or just after creation, and nothing since.
+const creatorQuietBound = time.Minute
+
+// creatorQuiet: the issue's last update is within creatorQuietBound of its
+// creation. An unparsable time is not quiet.
+func creatorQuiet(createdAt, updatedAt string) bool {
+	c, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return false
+	}
+	u, err := time.Parse(time.RFC3339Nano, updatedAt)
+	return err == nil && u.Sub(c) <= creatorQuietBound
+}
+
 // creatorQueue queues an S1 issue whose label the creator set, on the
 // proof of candidate: trusted if the creator is (the list, then the team
-// roles), else untrusted. Like fallback, it queues only an issue the project
-// has no row for.
+// roles), else untrusted. The untrusted path, like fallback, queues only
+// into a free slot (an issue the project has no row for); the trusted path
+// goes through the normal enqueue, stamped with the issue's creation.
 func (r *intakeRun) creatorQueue(ctx context.Context, signal, name string, issue linearprovider.IssueV2, creator, createdAt string) {
 	trusted := r.state.Trusted[creator]
 	if trusted {
@@ -1124,6 +1146,7 @@ func (r *intakeRun) transition(ctx context.Context, issue, query string, matches
 			if matches(n) {
 				return n, true, info, nil
 			}
+			info.Entries++
 			if info.Creator == "" || n.ActorID != info.Creator || n.BotActor != nil {
 				info.OnlyCreator = false
 			}
@@ -1151,6 +1174,9 @@ type historyInfo struct {
 	Creator     string
 	OnlyCreator bool
 	CreatedAt   string
+	// Entries counts the entries the walk saw; none can mean a lagging
+	// history as well as a label set at creation.
+	Entries int
 }
 
 // userCheckTTL is how old a user's eligibility read may be when a role

@@ -52,6 +52,9 @@
   half-written one, keeps the usual checks. An agent folder that exists but is empty (a `~/.claude` an installer made)
   is now treated like a missing one: `skill.version` and `mcp.entries` are notes, not warnings. The JSON gains the
   `setup.none` check id and keeps the rest. No schema change. Linear config scope: none.
+- Linear intake: an issue whose history shows no entry at all is credited to its creator only when it was last changed
+  within a minute of its creation. A lagging history can no longer pass another person's label for the creator's; such
+  an issue is queued untrusted. No schema change. Linear config scope: none.
 
 ## Docs
 

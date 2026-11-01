@@ -191,6 +191,65 @@ func TestDispatcherEmptyProjectUntrustedEscalatesWithTheDomain(t *testing.T) {
 	}
 }
 
+// A stale untrusted session's claim with no reported project is read on the
+// first tick and escalated as untrusted for the app's domain, not left to wait
+// out the idle window. A stale trusted session still waits and spends no read.
+func TestDispatcherStaleUntrustedEscalatesOnTheFirstTick(t *testing.T) {
+	at := func(d time.Duration) string {
+		return time.Now().UTC().Add(d).Format("2006-01-02T15:04:05.000000000Z07:00")
+	}
+	for name, c := range map[string]struct {
+		trusted []string
+		reads   int
+		action  string
+		reason  string
+		domain  string
+	}{
+		"untrusted": {nil, 1, "escalate", "untrusted", "payments"},
+		"trusted":   {[]string{"eng"}, 0, "wait", "session_stale", ""},
+	} {
+		e := setup(t)
+		e.dispatcherOn(c.trusted...)
+		e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projPay, "unstarted")}
+		e.propose("eng", issueA, "")
+		e.sql(`UPDATE sessions SET last_seen='` + at(-48*time.Hour) + `',alive_until='` + at(-47*time.Hour) + `',alive_state='idle' WHERE name='eng'`)
+		tick := e.tick()
+		if tick.Dispatch == nil || tick.Dispatch.Reads != c.reads || tick.Dispatch.Actions[c.action] != 1 || e.assignmentState("eng") != "proposed" {
+			t.Fatal(name, tick.Dispatch, tick.Error, e.assignmentState("eng"))
+		}
+		var reason, domain string
+		e.queryRow(`SELECT reason_code,domain FROM dispatcher_decisions WHERE action='`+c.action+`'`, &reason, &domain)
+		if reason != c.reason || (c.domain != "" && domain != c.domain) {
+			t.Fatal(name, reason, domain)
+		}
+	}
+}
+
+// A stale untrusted session whose issue is in no project domain is read once
+// and decided (no_domain), not read again on every tick of the idle window.
+func TestDispatcherStaleUntrustedOutsideDomainsIsReadOnce(t *testing.T) {
+	at := func(d time.Duration) string {
+		return time.Now().UTC().Add(d).Format("2006-01-02T15:04:05.000000000Z07:00")
+	}
+	e := setup(t)
+	e.dispatcherOn()
+	e.f.dispatchIssues = map[string]any{issueA: appIssue(issueA, projOther, "unstarted")}
+	e.propose("eng", issueA, "")
+	e.sql(`UPDATE sessions SET last_seen='` + at(-48*time.Hour) + `',alive_until='` + at(-47*time.Hour) + `',alive_state='idle' WHERE name='eng'`)
+	tick := e.tick()
+	if tick.Dispatch == nil || tick.Dispatch.Reads != 1 || tick.Dispatch.Actions["escalate"] != 1 {
+		t.Fatal(tick.Dispatch, tick.Error)
+	}
+	var reason string
+	e.queryRow(`SELECT reason_code FROM dispatcher_decisions WHERE action='escalate'`, &reason)
+	if reason != "no_domain" {
+		t.Fatal(reason)
+	}
+	if again := e.tick(); again.Dispatch != nil && again.Dispatch.Reads != 0 {
+		t.Fatal("the decided claim was read again:", again.Dispatch)
+	}
+}
+
 // An untrusted session's claim is escalated to the domain's coordinator,
 // once, with no issue text, and never confirmed however long it waits.
 func TestDispatcherEscalatesAndSilenceNeverGrants(t *testing.T) {

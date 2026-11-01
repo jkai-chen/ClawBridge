@@ -67,6 +67,8 @@
 - Linear intake: an issue whose history shows no entry at all is credited to its creator only when it was last changed
   within a minute of its creation. A lagging history can no longer pass another person's label for the creator's; such
   an issue is queued untrusted. No schema change. Linear config scope: none.
+- Dispatcher: an untrusted session's claim, from a session no project domain trusts, is escalated at once, even when
+  the session looks idle, instead of waiting out the idle window. No schema change. Linear config scope: none.
 
 ## Docs
 

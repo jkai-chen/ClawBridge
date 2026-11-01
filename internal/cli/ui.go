@@ -83,7 +83,8 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 		ClientVersion: buildinfo.Current().Version,
 		Mode:          c.Mode,
 		Platform:      platform,
-		Profile:       map[string]any{"workspace": c.Workspace, "project": c.Project, "waiting_for_project": in.Waiting},
+		Profile:       uiProfile(c, in.Waiting, hostName()),
+		Bundle:        srv.BundleID(),
 	}
 	backend.Methods = map[string]guibackend.Method{
 		"sessions.list": guibackend.SessionsList(in.Executor, guibackend.Scope{Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance}),
@@ -159,4 +160,24 @@ func handOffUI(ctx context.Context, stateDir, profile, platform string, noOpen b
 	fmt.Fprintf(stdout, "ClawBridge UI is already running on %s; opening a new tab.\n", h.URL)
 	openUI(ctx, stderr, webui.FileRoute(platform), func(ctx context.Context) (bool, error) { return uiOpener(platform)(ctx, h.Target) })
 	return nil
+}
+
+// hostName is this device's name for the page's "This device" line; empty
+// when the system does not say.
+func hostName() string {
+	h, _ := os.Hostname()
+	return h
+}
+
+// uiProfile is hello's profile summary: the scope, who is signed in (the
+// principal the profile records, which the page shows as an initial) and this
+// device's name. No key, token or path.
+func uiProfile(c Config, waiting bool, device string) map[string]any {
+	return map[string]any{
+		"workspace":           c.Workspace,
+		"project":             c.Project,
+		"waiting_for_project": waiting,
+		"principal":           c.Principal,
+		"device":              device,
+	}
 }

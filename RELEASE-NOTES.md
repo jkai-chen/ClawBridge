@@ -1,3 +1,9 @@
+# Unreleased
+
+## Sessions
+
+- **`clawbridge ui` opens a local web UI (read-only for now: sessions and doctor) on 127.0.0.1, stopping a minute after its tab closes.** Docs: docs/usage.md, "Web interface". No schema change. Linear config scope: none.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

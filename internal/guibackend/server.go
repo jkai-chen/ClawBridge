@@ -85,6 +85,9 @@ type Hello struct {
 	Platform string
 	// Profile is a small summary of the open profile, or an error.
 	Profile any
+	// Bundle names the UI bundle being served: "placeholder" or the
+	// bundle's sha256 (webui.BundleID). Left out of hello when empty.
+	Bundle string
 }
 
 // Server holds the allow-list and the event hub. Methods is the
@@ -306,13 +309,24 @@ func (s *Server) call(ctx context.Context, req request) (result any, code int, e
 	}()
 	if req.Method == "hello" {
 		h := s.Hello
-		return map[string]any{
+		out := map[string]any{
 			"client_version": h.ClientVersion,
 			"protocol":       ProtocolVersion,
 			"mode":           h.Mode,
 			"platform":       h.Platform,
 			"profile":        h.Profile,
-		}, 0, nil
+		}
+		if h.Bundle != "" {
+			out["bundle"] = h.Bundle
+		}
+		// On WSL the page names the distro ("Ubuntu (WSL)"); elsewhere the
+		// field is left out.
+		if h.Platform == "wsl" {
+			if d := os.Getenv("WSL_DISTRO_NAME"); d != "" {
+				out["distro"] = d
+			}
+		}
+		return out, 0, nil
 	}
 	m, ok := s.Methods[req.Method]
 	if !ok || m.Call == nil || (m.Class != Read && !s.AllowWrites) {

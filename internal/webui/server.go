@@ -29,7 +29,7 @@ import (
 	"clawbridge/internal/guibackend"
 )
 
-//go:embed dist
+//go:embed all:dist
 var embedded embed.FS
 
 // Defaults for Config.
@@ -103,6 +103,7 @@ type Server struct {
 	tokens   *tokens
 	log      *logger
 	bundle   fs.FS
+	bundleID string
 	index    []byte
 
 	started time.Time
@@ -147,13 +148,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Poll <= 0 {
 		cfg.Poll = time.Second
 	}
-	bundle := cfg.Bundle
+	bundle, bundleID := cfg.Bundle, ""
 	if bundle == nil {
-		sub, err := fs.Sub(embedded, "dist")
-		if err != nil {
+		var err error
+		if bundle, bundleID, err = embeddedBundle(); err != nil {
 			return nil, err
 		}
-		bundle = sub
+	} else {
+		bundleID = BundleID(bundle)
 	}
 	index, err := fs.ReadFile(bundle, "index.html")
 	if err != nil {
@@ -183,7 +185,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{cfg: cfg, dir: dir, platform: cfg.Platform, opener: cfg.Opener, unlock: unlock,
-		tokens: newTokens(cfg.LaunchTTL), log: &logger{w: cfg.Log}, bundle: bundle, index: index}
+		tokens: newTokens(cfg.LaunchTTL), log: &logger{w: cfg.Log}, bundle: bundle, bundleID: bundleID, index: index}
 	// The lock is ours: launch files left by a crash are stale.
 	if old, _ := filepath.Glob(filepath.Join(dir, "launch-*.html")); old != nil {
 		for _, f := range old {
@@ -219,6 +221,11 @@ func ProfileDir(base, profile string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(profile)))
 	return filepath.Join(base, hex.EncodeToString(sum[:])[:12])
 }
+
+// BundleID names the bundle being served: "placeholder" for the hand-written
+// "UI not built" page, otherwise the sha256 of the built bundle's manifest
+// (BundleID in bundle.go). hello reports it so a release can assert it.
+func (s *Server) BundleID() string { return s.bundleID }
 
 // URL is where the server runs, without a token.
 func (s *Server) URL() string { return "http://127.0.0.1:" + s.port }

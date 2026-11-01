@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The server sends the Content-Security-Policy as a header on every
+         response (GUI-DESIGN §12.3 C7); the page needs no meta policy. Bundled
+         assets only: no remote scripts, fonts or images, no eval, no inline
+         script or style. The server inserts a one-time cb-session meta right
+         after the head tag above, so keep it exactly as written. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>ClawBridge</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>ClawBridge needs JavaScript.</noscript>
+  </body>
+</html>

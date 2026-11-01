@@ -613,7 +613,7 @@ func (f *fakeExec) ResolveProject(context.Context, string, string, string) (stri
 // fake executor. The frontend's tests read the same files.
 func TestRPCFixtures(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("testdata", "rpc", "*.json"))
-	if err != nil || len(files) < 4 {
+	if err != nil || len(files) < 7 {
 		t.Fatal(files, err)
 	}
 	exec := &fakeExec{}
@@ -625,6 +625,12 @@ func TestRPCFixtures(t *testing.T) {
 			{ID: "skill", Title: "Skill", Status: doctor.Warn, Message: "skill not installed", Action: "clawbridge skill install"},
 		}}, nil
 	})
+	// P2-6: Needs you and Updates, on their own fakes (the executor count below is sessions.list's).
+	ncfg := needsCfg(syntheticExec(), "mara@example.test")
+	ncfg.Now = func() time.Time { return time.Date(2026, 1, 2, 10, 42, 0, 0, time.UTC) }
+	s.Methods["needs.list"] = NeedsList(ncfg)
+	s.Methods["updates.status"] = UpdatesStatus(fixtureUpdatesCfg())
+	s.Methods["updates.check"] = UpdatesCheck(fixtureUpdatesCfg())
 	delete(s.Methods, "echo")
 	h := s.Handler()
 	for _, file := range files {

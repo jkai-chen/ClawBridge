@@ -1,0 +1,23 @@
+{
+  "description": "updates.check: a release that needs a manual update",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "updates.check"
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+      "action": "update",
+      "checked_at": "2026-01-02T10:42:00Z",
+      "cached": false,
+      "current": "v1.0.0",
+      "hold": false,
+      "manual_required": true,
+      "manual_text": "v1.1.0 needs a manual update: sign in again after installing.",
+      "target": "v1.1.0",
+      "update_available": true
+    }
+  }
+}

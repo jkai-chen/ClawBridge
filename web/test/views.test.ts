@@ -257,11 +257,12 @@ describe("the app shell", () => {
     expect(host.querySelector("h1")?.textContent).toBe("Overview");
   });
 
-  it("makes every other screen a placeholder that says 'Not in this build yet.'", async () => {
+  it("has a real view for every screen: none is left as a placeholder", async () => {
     const { host } = await mount();
-    for (const id of ["needs-you"]) {
+    for (const id of ["overview", "needs-you", "sessions", "projects", "teams", "linear", "dispatcher", "account", "doctor", "settings"]) {
       await visit(`#/${id}`);
-      expect(host.querySelector(".empty b")?.textContent).toBe("Not in this build yet.");
+      expect(host.querySelector(".placeholder-q"), id).toBeNull();
+      expect(host.querySelector("h1"), id).not.toBeNull();
     }
     expect(host.textContent).not.toMatch(/next release/i);
   });

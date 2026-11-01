@@ -96,11 +96,22 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 		Profile:       profileInfo,
 		Bundle:        srv.BundleID(),
 	}
+	// One doctor report serves doctor.checks and Needs you: the 30 s needs
+	// cycle reuses it for 10 minutes (N1), a page open for 30 s.
+	doctorFeed := guibackend.NewDoctorFeed(in.Doctor, nil)
+	needs := guibackend.NeedsConfig{Exec: in.Executor, Scope: guibackend.Scope{Workspace: c.Workspace, Project: c.Project}, Doctor: doctorFeed.Cached(guibackend.DoctorPageAge), Mode: c.Mode, Principal: profileInfo["principal"].(string)}
+	needsCycle := needs
+	needsCycle.Doctor = doctorFeed.Cached(guibackend.DoctorBackgroundAge)
+	updates := uiUpdatesConfig(in)
 	backend.Methods = map[string]guibackend.Method{
 		"sessions.list": guibackend.SessionsList(in.Executor, guibackend.Scope{Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance}),
-		"doctor.checks": guibackend.DoctorChecks(in.Doctor),
+		"doctor.checks": guibackend.DoctorChecks(doctorFeed.Run),
 		// FR44: the same lookup and refusals as clawbridge launch-command.
 		"sessions.launchCommand": guibackend.LaunchCommand(newLaunchSource(flags, in)),
+		// P2-6: Needs you (composed from existing reads) and the Updates reads.
+		"needs.list":     guibackend.NeedsList(needs),
+		"updates.status": guibackend.UpdatesStatus(updates),
+		"updates.check":  guibackend.UpdatesCheck(updates),
 	}
 
 	// P2-5: the Projects, Linear, Teams & People, Dispatcher and Account
@@ -119,6 +130,7 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 	// messages.changed: the only live inbox source is a session's observe
 	// stream (tui/inboxlive.go), and the UI never runs as a session.
 	go guibackend.PushOutboxCount(ctx, backend, in.OutboxWaiting, 5*time.Second)
+	go guibackend.PushNeedsChanged(ctx, backend, needsCycle, 30*time.Second)
 	fmt.Fprintf(stdout, "ClawBridge UI on %s (stops when you close the tab)\n", srv.URL())
 	if noOpen {
 		link, err := srv.NoOpenURL()

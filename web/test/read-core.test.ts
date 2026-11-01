@@ -127,15 +127,6 @@ describe("Overview", () => {
     expect(root.querySelector(".legend")?.children).toHaveLength(0);
   });
 
-  it("never claims nothing needs the person; it names the commands that list these today", async () => {
-    const { root } = await mountOverview({ "sessions.list": () => sessionsFixture });
-    const text = root.querySelector("[data-block=needs]")?.textContent ?? "";
-    expect(text).not.toContain("Nothing needs you");
-    expect(text).toContain("Needs you arrives in a later build.");
-    const cmds = Array.from(root.querySelectorAll("[data-block=needs] code")).map((c) => c.textContent);
-    expect(cmds).toEqual(["clawbridge dispatcher escalations", "clawbridge sessions --assignment-state proposed", "clawbridge intake list", "clawbridge doctor"]);
-  });
-
   it("explains the bars on the page, labels them 'since', and is a group for screen readers", async () => {
     const { root } = await mountOverview({ "sessions.list": () => sessionsFixture });
     expect(root.querySelector(".lanes-note")?.textContent).toBe("Each bar is the session's state since its last update. Past states arrive in a later build.");

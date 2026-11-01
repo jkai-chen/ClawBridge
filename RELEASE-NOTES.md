@@ -1,3 +1,9 @@
+# Unreleased
+
+## Fixes
+
+- Dispatcher: an untrusted session's claim on a project domain is escalated at once, even when the session looks idle, instead of waiting out the idle window.
+
 # ClawBridge v1.0.0 (released 2 Nov)
 
 **ClawBridge 1.0.** Someone who isn't the project's owner can install ClawBridge, set up a server (on their own

@@ -22,15 +22,28 @@ func TestRulesTable(t *testing.T) {
 		"retired session":             {func(c *Case) { c.Session.Status = "retired" }, false, 0, 0, Decline, "session_gone", ""},
 		"stale, recent":               {func(c *Case) { c.Session.Presence = "stale" }, false, 0, time.Hour, Wait, "session_stale", "payments"},
 		"stale, long":                 {func(c *Case) { c.Session.Presence = "stale" }, false, 0, 7 * time.Hour, Escalate, "session_stale", "payments"},
-		"read failed":                 {func(c *Case) { c.Issue.Authoritative = false }, true, 0, 0, Wait, "facts_unavailable", "payments"},
-		"read failed thrice":          {func(c *Case) { c.Issue.Authoritative = false }, true, 3, 0, Escalate, "facts_unavailable", "payments"},
-		"closed issue":                {func(c *Case) { c.Issue.StateType = "completed" }, false, 0, 0, Escalate, "issue_closed", "payments"},
-		"duplicate issue":             {func(c *Case) { c.Issue.StateType = "duplicate" }, false, 0, 0, Escalate, "issue_closed", "payments"},
-		"held":                        {func(c *Case) { c.Holders = 1 }, false, 0, 0, Escalate, "overlap", "payments"},
-		"untrusted":                   {func(c *Case) { c.Session.ID = "ses_other" }, false, 0, 0, Escalate, "untrusted", "payments"},
-		"label only":                  {func(c *Case) { c.Issue.ProjectID = ""; c.Issue.Labels = []string{"Platform"} }, false, 0, 0, Escalate, "label_only", "platform"},
-		"no domain":                   {func(c *Case) { c.Issue.ProjectID = "" }, false, 0, 0, Escalate, "no_domain", ""},
-		"two label domains":           {func(c *Case) { c.Issue.ProjectID = ""; c.Issue.Labels = []string{"payments", "platform"} }, false, 0, 0, Escalate, "ambiguous", ""},
+		"stale, untrusted":            {func(c *Case) { c.Session.Presence = "stale"; c.Session.ID = "ses_other" }, false, 0, time.Hour, Escalate, "untrusted", "payments"},
+		"stale, closed":               {func(c *Case) { c.Session.Presence = "stale"; c.Issue.StateType = "completed" }, false, 0, time.Hour, Wait, "session_stale", "payments"},
+		"stale, untrusted, no domain": {func(c *Case) {
+			c.Session.Presence = "stale"
+			c.Session.ID = "ses_other"
+			c.Issue.ProjectID = ""
+		}, false, 0, time.Hour, Escalate, "no_domain", ""},
+		"stale, untrusted, client": {func(c *Case) { c.Session.Presence = "stale"; c.Session.ID = "ses_other"; c.Issue.Authoritative = false }, false, 0, time.Hour, Wait, "session_stale", "payments"},
+		"stale, untrusted, closed": {func(c *Case) {
+			c.Session.Presence = "stale"
+			c.Session.ID = "ses_other"
+			c.Issue.StateType = "completed"
+		}, false, 0, time.Hour, Wait, "session_stale", "payments"},
+		"read failed":        {func(c *Case) { c.Issue.Authoritative = false }, true, 0, 0, Wait, "facts_unavailable", "payments"},
+		"read failed thrice": {func(c *Case) { c.Issue.Authoritative = false }, true, 3, 0, Escalate, "facts_unavailable", "payments"},
+		"closed issue":       {func(c *Case) { c.Issue.StateType = "completed" }, false, 0, 0, Escalate, "issue_closed", "payments"},
+		"duplicate issue":    {func(c *Case) { c.Issue.StateType = "duplicate" }, false, 0, 0, Escalate, "issue_closed", "payments"},
+		"held":               {func(c *Case) { c.Holders = 1 }, false, 0, 0, Escalate, "overlap", "payments"},
+		"untrusted":          {func(c *Case) { c.Session.ID = "ses_other" }, false, 0, 0, Escalate, "untrusted", "payments"},
+		"label only":         {func(c *Case) { c.Issue.ProjectID = ""; c.Issue.Labels = []string{"Platform"} }, false, 0, 0, Escalate, "label_only", "platform"},
+		"no domain":          {func(c *Case) { c.Issue.ProjectID = "" }, false, 0, 0, Escalate, "no_domain", ""},
+		"two label domains":  {func(c *Case) { c.Issue.ProjectID = ""; c.Issue.Labels = []string{"payments", "platform"} }, false, 0, 0, Escalate, "ambiguous", ""},
 		// The client said one project, but the authoritative read was not
 		// made: the guardrail refuses the grant.
 		"client facts only": {func(c *Case) { c.Issue.Authoritative = false }, false, 0, 0, Escalate, "guardrail:facts_not_authoritative", "payments"},
@@ -74,6 +87,19 @@ func TestNeedsRead(t *testing.T) {
 	c.Issue.Authoritative = false
 	if !NeedsRead(c) {
 		t.Fatal("a confirmable claim does not need the read")
+	}
+	// A stale session that no project domain trusts can never be confirmed;
+	// the read only routes its escalation.
+	stale := c
+	stale.Session.Presence = "stale"
+	stale.Session.ID = "ses_other"
+	stale.Issue.ProjectID = ""
+	if !NeedsRead(stale) {
+		t.Fatal("a stale untrusted claim does not read")
+	}
+	stale.Session.Status = "retired"
+	if NeedsRead(stale) {
+		t.Fatal("a retired session spends a read")
 	}
 	for name, edit := range map[string]func(*Case){
 		"untrusted": func(c *Case) { c.Session.ID = "ses_other" },

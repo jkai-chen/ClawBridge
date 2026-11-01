@@ -1,0 +1,17 @@
+{
+  "description": "account.devices in local mode says Account is for hosted workspaces",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "account.devices",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "hosted": false,
+      "reason": "Account is for hosted workspaces."
+    }
+  }
+}

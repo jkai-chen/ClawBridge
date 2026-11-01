@@ -1,0 +1,37 @@
+{
+  "description": "linear.issue answers one issue",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.issue",
+    "params": {
+      "profile": "lp_mara",
+      "issue_id": "iss_1"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "issue": {
+        "assignee_known": false,
+        "children_known": false,
+        "context_complete": false,
+        "cycle_known": false,
+        "description": "Back off, then retry up to 3 times.",
+        "due_date_known": false,
+        "estimate_known": false,
+        "id": "iss_1",
+        "identifier": "ATL-212",
+        "labels_known": false,
+        "parent_known": false,
+        "priority_known": false,
+        "project_known": false,
+        "relations_known": false,
+        "state": "In Progress",
+        "team_id": "team_atl",
+        "title": "Retry failed invoices"
+      }
+    }
+  }
+}

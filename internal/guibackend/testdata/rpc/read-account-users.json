@@ -1,0 +1,58 @@
+{
+  "description": "account.users answers the members (main owner only)",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "account.users",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "hosted": true,
+      "main_owner": true,
+      "principal": "mara@example.test",
+      "users": [
+        {
+          "devices": [],
+          "invited_by": "",
+          "principal": "mara@example.test",
+          "roles": [
+            {
+              "role": "owner",
+              "slug": "atlas-api"
+            }
+          ]
+        },
+        {
+          "devices": [
+            {
+              "device_id": "dev_9",
+              "label": "kofi-pc"
+            }
+          ],
+          "invited_by": "mara@example.test",
+          "principal": "kofi@example.test",
+          "roles": [
+            {
+              "role": "member",
+              "slug": "atlas-api"
+            }
+          ]
+        },
+        {
+          "devices": [],
+          "invited_by": "mara@example.test",
+          "principal": "ines@example.test",
+          "roles": [
+            {
+              "role": "member",
+              "slug": "harbor-web"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

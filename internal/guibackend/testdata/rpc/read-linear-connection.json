@@ -1,0 +1,24 @@
+{
+  "description": "linear.connection lists the connections and the access of each",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.connection",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "profiles": [
+        {
+          "access": "write",
+          "account_label": "Mara Lindqvist",
+          "id": "lp_mara",
+          "name": "mara",
+          "workspace_label": "Northwind"
+        }
+      ]
+    }
+  }
+}

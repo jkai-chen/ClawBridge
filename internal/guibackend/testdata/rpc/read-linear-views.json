@@ -1,0 +1,44 @@
+{
+  "description": "linear.views answers the bound teams' shared views",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.views",
+    "params": {
+      "profile": "lp_mara"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "teams": [
+        {
+          "error": "",
+          "more": false,
+          "other_kinds": 1,
+          "team_id": "team_atl",
+          "views": [
+            {
+              "id": "vw_1",
+              "kind": "issue",
+              "name": "Billing board",
+              "team_id": "team_atl",
+              "team_key": "ATL",
+              "team_name": "Atlas"
+            }
+          ],
+          "workspace_views": 2
+        },
+        {
+          "error": "Linear refused the read",
+          "more": false,
+          "other_kinds": 0,
+          "team_id": "team_hrb",
+          "views": [],
+          "workspace_views": 0
+        }
+      ]
+    }
+  }
+}

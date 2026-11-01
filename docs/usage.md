@@ -683,8 +683,9 @@ clawbridge ui --no-open
 ```
 
 `clawbridge ui` opens ClawBridge in your browser, served by the client on
-`127.0.0.1` (a random port, or `--port N`). It is read-only for now: Sessions
-and Doctor are live, and every other screen says "Not in this build yet."
+`127.0.0.1` (a random port, or `--port N`). It is read-only for now: Overview
+(the agent lanes), Sessions (with the Launch block, below) and Doctor are live,
+and every other screen says "Not in this build yet."
 
 - **It stops by itself** one minute after the last tab closes, on Ctrl-C, and
   after two minutes if no tab ever connects. It is never a daemon and never
@@ -707,6 +708,52 @@ and Doctor are live, and every other screen says "Not in this build yet."
 - **A release binary includes the page.** A binary built from source without
   building `web/` first shows a "UI isn't built into this binary" page; see
   [development](development.md).
+
+## Launch command
+
+```sh
+clawbridge launch-command --session NAME                 # Claude Code (the default)
+clawbridge launch-command --session NAME --agent codex
+clawbridge launch-command --session NAME --json
+```
+
+Prints the one line that starts that session's agent in your own terminal. Paste
+it there; the web UI's Sessions drawer shows the same line with a Copy button.
+
+- **Claude Code:** `CLAWBRIDGE_SESSION=NAME CLAWBRIDGE_INSTANCE=INSTANCE claude --mcp-config FILE`.
+  The file is the session's own, `mcp/NAME.json` under the state directory
+  (`~/.clawbridge`, or `CLAWBRIDGE_HOME`). The command writes it the same way
+  `mcp install --agent claude-code --session NAME --config FILE` would, if it is
+  missing or belongs to an older instance of the session; no hooks are installed.
+  The server in it is named `clawbridge`. When the same name is also defined in
+  the project's `.mcp.json` (or at user scope), Claude Code connects the
+  `--mcp-config` one only: tested on Claude Code 2.1.316 with a `clawbridge`
+  entry in both, where only the `--mcp-config` server started, and without the
+  flag the `.mcp.json` one did. Claude Code's
+  [scope precedence](https://code.claude.com/docs/en/mcp#scope-hierarchy-and-precedence)
+  ranks project above user and uses a duplicate once, whole, so the line's file
+  also beats a user-level `clawbridge`. A server under a *different* name in
+  `.mcp.json` or `~/.claude.json` still starts next to it. The line does not use
+  `--strict-mcp-config`, which would drop your other MCP servers.
+- **Codex:** `CLAWBRIDGE_SESSION=NAME CLAWBRIDGE_INSTANCE=INSTANCE codex -c 'mcp_servers.clawbridge.command="…"' -c 'mcp_servers.clawbridge.args=[…]'`.
+  Codex starts every `[mcp_servers.*]` entry in its `config.toml`, so a per-session
+  entry there would run beside the others and the agent would act as all of them.
+  The line therefore carries the server itself, under the one name `clawbridge`,
+  with exactly the command and arguments `mcp install --agent codex` would write
+  (`codex --help`: `-c key=value` overrides a config value by dotted path, and the
+  value is parsed as TOML). An existing `[mcp_servers.clawbridge]` is replaced
+  field by field (its command and args become this session's; checked with
+  `codex mcp list` on codex-cli 0.163.0). This command never edits Codex's
+  config. If your `config.toml` has other entries whose command is `clawbridge`,
+  it warns "Your Codex config also starts ClawBridge as NAME; remove it so this
+  agent acts only as SESSION." (on stderr, and in the drawer), because Codex would
+  start them too.
+- Every variable part is POSIX single-quoted, so paste it into bash, zsh or
+  another POSIX shell (on Windows, use the one inside WSL). The line holds no key,
+  token or other secret.
+- **Only your own sessions.** It is refused for a session another person's
+  account owns ("only kofi@example.test can start this agent"), as the server
+  already refuses to run a session as someone else.
 
 ## Offline reads
 

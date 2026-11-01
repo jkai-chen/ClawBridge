@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,8 +11,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"clawbridge/internal/buildinfo"
+	"clawbridge/internal/bus"
 	"clawbridge/internal/guibackend"
 	"clawbridge/internal/webui"
 )
@@ -79,20 +82,34 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 	}
 	defer in.Close()
 	c := in.Config
+	// The page decides which sessions are the viewer's own by comparing an
+	// owner to this principal, so it is the one the server answers whoami
+	// with (the OS user in local mode), not only the profile's setting.
+	profileInfo := uiProfile(c, in.Waiting, hostName())
+	if who, err := viewerPrincipal(ctx, in); err == nil && who != "" {
+		profileInfo["principal"] = who
+	}
 	backend.Hello = guibackend.Hello{
 		ClientVersion: buildinfo.Current().Version,
 		Mode:          c.Mode,
 		Platform:      platform,
-		Profile:       uiProfile(c, in.Waiting, hostName()),
+		Profile:       profileInfo,
 		Bundle:        srv.BundleID(),
 	}
 	backend.Methods = map[string]guibackend.Method{
 		"sessions.list": guibackend.SessionsList(in.Executor, guibackend.Scope{Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance}),
 		"doctor.checks": guibackend.DoctorChecks(in.Doctor),
+		// FR44: the same lookup and refusals as clawbridge launch-command.
+		"sessions.launchCommand": guibackend.LaunchCommand(newLaunchSource(flags, in)),
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Push: outbox.count every 5 s, from the same drain the TUI's status
+	// line reads (nil in local mode, which has no outbox). There is no
+	// messages.changed: the only live inbox source is a session's observe
+	// stream (tui/inboxlive.go), and the UI never runs as a session.
+	go guibackend.PushOutboxCount(ctx, backend, in.OutboxWaiting, 5*time.Second)
 	fmt.Fprintf(stdout, "ClawBridge UI on %s (stops when you close the tab)\n", srv.URL())
 	if noOpen {
 		link, err := srv.NoOpenURL()
@@ -180,4 +197,23 @@ func uiProfile(c Config, waiting bool, device string) map[string]any {
 		"principal":           c.Principal,
 		"device":              device,
 	}
+}
+
+// viewerPrincipal is who the server says this client is (whoami), for hello.
+func viewerPrincipal(ctx context.Context, in *uiInputs) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res, err := in.Executor.Execute(ctx, bus.Request{Operation: "whoami", Workspace: in.Config.Workspace, Project: in.Config.Project, Args: map[string]any{}})
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(res.Data)
+	if err != nil {
+		return "", err
+	}
+	var who struct {
+		Principal string `json:"principal"`
+	}
+	err = json.Unmarshal(b, &who)
+	return who.Principal, err
 }

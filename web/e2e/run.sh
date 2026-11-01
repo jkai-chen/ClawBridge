@@ -19,6 +19,8 @@ mkdir -p "$work/home"
 run() { env -i PATH="$PATH" HOME="$work/home" CLAWBRIDGE_HOME="$work/home" "$@"; }
 run "$bin" setup --local --workspace w >/dev/null
 run "$bin" project create p >/dev/null
+# One session of this person's own, for the Sessions drawer's launch line.
+run "$bin" --session e2e-agent register --agent-kind claude-code --role engineer >/dev/null
 # exec: $! is the server itself, so the trap stops it, not a wrapper shell.
 ( exec env -i PATH="$PATH" HOME="$work/home" CLAWBRIDGE_HOME="$work/home" "$bin" ui --no-open >"$work/ui.out" 2>"$work/ui.err" ) &
 pid=$!

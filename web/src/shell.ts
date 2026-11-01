@@ -6,6 +6,7 @@ import { icon, mark } from "./icons";
 import { go, parseRoute, type RouteId } from "./router";
 import { ConnectionError, type ConnState } from "./transport";
 import { doctorView } from "./views/doctor";
+import { overviewView } from "./views/overview";
 import { placeholder } from "./views/placeholder";
 import { sessionsView } from "./views/sessions";
 import { settingsView } from "./views/settings";
@@ -28,7 +29,7 @@ const NAV: NavItem[] = [
 const SETTINGS: NavItem = { id: "settings", label: "Settings", icon: "settings" };
 
 const VIEWS: Record<RouteId, View> = {
-  overview: placeholder({ title: "Overview", question: "Which agents need me now?" }),
+  overview: overviewView,
   "needs-you": placeholder({ title: "Needs you", question: "What is waiting on me, and what do I do about it?" }),
   sessions: sessionsView,
   projects: placeholder({ title: "Projects", question: "Which projects am I in and how are they bound?" }),
@@ -71,6 +72,15 @@ export function mountApp(host: HTMLElement, api: Api): void {
   let offlineAt: string | null = null;
   let generation = 0;
   let loadingHello = false;
+  let outboxWaiting: number | null = null;
+  const outboxListeners = new Set<(n: number) => void>();
+  const outbox = {
+    get: () => outboxWaiting,
+    subscribe: (fn: (n: number) => void) => {
+      outboxListeners.add(fn);
+      return () => { outboxListeners.delete(fn); };
+    },
+  };
 
   const sidebar = h("aside", { class: "sidebar" });
   const nav = h("nav", { class: "nav", "aria-label": "Main" });
@@ -154,7 +164,7 @@ export function mountApp(host: HTMLElement, api: Api): void {
     VIEWS[route]({
       root: view, api, hello,
       isCurrent: () => mine === generation,
-      setBadge,
+      setBadge, outbox,
       go: (p) => go(p as RouteId),
       connection: (k) => { conn = k; render(); },
       setOffline: (at) => {
@@ -177,7 +187,15 @@ export function mountApp(host: HTMLElement, api: Api): void {
 
   window.addEventListener("hashchange", render);
   render();
-  api.events(() => {}, (s) => {
+  api.events((e) => {
+    if (e.event !== "outbox.count") return;
+    // Anything but a count is ignored: the page trusts the shape, not the sender.
+    let n: unknown;
+    try { n = (JSON.parse(e.data) as { waiting?: unknown }).waiting; } catch { return; }
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return;
+    outboxWaiting = Math.floor(n);
+    for (const fn of outboxListeners) fn(outboxWaiting);
+  }, (s) => {
     const was = conn;
     conn = s;
     if (s === "ok" && was !== "ok") loadHello();

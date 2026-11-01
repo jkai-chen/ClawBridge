@@ -26,7 +26,7 @@ WINDOWS_DIRS = [
     "internal/ctxwatch", "internal/devicekey", "internal/devicesign", "internal/dispatch",
     "internal/dispatchermodel", "internal/docpublish", "internal/docseed", "internal/doctor",
     "internal/faketool", "internal/fsprivate", "internal/guibackend", "internal/hostobserve", "internal/install",
-    "internal/linearapp",
+    "internal/launchcmd", "internal/linearapp",
     "internal/linearboard", "internal/linearconn", "internal/linearkey", "internal/linearpace",
     "internal/linearprovider", "internal/mcpserver", "internal/mirror", "internal/notify",
     "internal/outbox", "internal/playbook", "internal/principal", "internal/remote",

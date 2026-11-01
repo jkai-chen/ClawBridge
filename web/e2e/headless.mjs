@@ -71,6 +71,17 @@ try {
   await page.evaluate(() => { location.hash = "#/sessions"; });
   await page.waitForFunction(() => document.querySelector("h1")?.textContent === "Sessions" && !document.querySelector(".finding")?.textContent?.startsWith("Loading"), { timeout: 15000 });
   check(rpc.some((r) => r.status === 200 && r.body.includes('"sessions.list"')), "Sessions loaded through /rpc");
+  // The drawer of the person's own session shows the backend's launch line.
+  await page.waitForSelector("tbody tr.pick", { timeout: 15000 });
+  await page.$eval("tbody tr.pick", (e) => e.click());
+  await page.waitForFunction(() => document.querySelector(".drawer .launch-line")?.textContent?.startsWith("CLAWBRIDGE_SESSION=e2e-agent CLAWBRIDGE_INSTANCE=inst_"), { timeout: 15000 });
+  check(true, "the drawer of an own session shows its launch line");
+  const line = await page.$eval(".drawer .launch-line", (e) => e.textContent ?? "");
+  check(/ claude --mcp-config \S+\/mcp\/e2e-agent\.json$/.test(line) && !/CLAWBRIDGE_[A-Z_]*(TOKEN|SECRET|KEY)/.test(line), "the line points at the per-session MCP file and names no secret");
+  check(rpc.some((r) => r.status === 200 && r.body.includes('"sessions.launchCommand"')), "the line came from sessions.launchCommand");
+  await page.evaluate(() => { location.hash = "#/overview"; });
+  await page.waitForSelector("svg.lanes-svg g.lane", { timeout: 15000 });
+  check(true, "Overview draws the agent lanes");
   await page.evaluate(() => { location.hash = "#/doctor"; });
   await page.waitForFunction(() => document.querySelector("h1")?.textContent === "Doctor" && !document.querySelector(".finding")?.textContent?.startsWith("Checking"), { timeout: 30000 });
   check(rpc.some((r) => r.status === 200 && r.body.includes('"doctor.checks"')), "Doctor loaded through /rpc");

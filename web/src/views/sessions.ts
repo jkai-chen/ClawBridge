@@ -6,6 +6,7 @@ import { hhmm, plural, since } from "../format";
 import { routeArg } from "../router";
 import { inTab, isOwn, stateWord, type SessionTab } from "../sessionstate";
 import { emptyBlock, errorBlock, safe, skBar, stamp, titleRow, type View, type ViewCtx } from "./common";
+import { historyBlock } from "./history";
 import { hostBadge, launchBlock } from "./launch";
 
 export { stateWord };
@@ -88,6 +89,7 @@ export function drawer(ctx: ViewCtx, s: SessionRow, now: Date, close: () => void
     h("div", { class: "hd" }, h("h2", { text: safe(s.name) }), closeBtn),
     facts,
     tail,
+    historyBlock(own),
   );
 }
 

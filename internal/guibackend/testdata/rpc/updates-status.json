@@ -1,0 +1,46 @@
+{
+  "description": "updates.status: versions only, no network; the binary on disk is newer than the running one",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "updates.status"
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+      "auto": {
+        "available": false
+      },
+      "client": {
+        "on_disk": "v1.0.1",
+        "restart_needed": true,
+        "version": "v1.0.0"
+      },
+      "mcp": [
+        {
+          "agent": "codex",
+          "name": "clawbridge",
+          "status": "warn",
+          "message": "points at an older binary"
+        }
+      ],
+      "mcp_note": "",
+      "skill": [
+        {
+          "agent": "claude-code",
+          "installed": true,
+          "installed_version": "v1.0.0",
+          "current": true
+        },
+        {
+          "agent": "codex",
+          "installed": true,
+          "installed_version": "v0.9.4",
+          "current": false
+        }
+      ],
+      "skill_note": ""
+    }
+  }
+}

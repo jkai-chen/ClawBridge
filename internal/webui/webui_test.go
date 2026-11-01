@@ -912,6 +912,9 @@ func TestRequestHandoffWithNothingRunning(t *testing.T) {
 }
 
 func TestPlaceholderBundleIsEmbedded(t *testing.T) {
+	if _, err := os.Stat("dist/app/index.html"); err == nil {
+		t.Skip("web/ is built into dist/app, so the real bundle is embedded; remove dist/app to test the placeholder")
+	}
 	r := start(t, func(c *Config) { c.Bundle = nil })
 	res := r.do("GET", "/", nil, "")
 	if res.StatusCode != 200 || !strings.Contains(res.body, "isn't built into this binary") {

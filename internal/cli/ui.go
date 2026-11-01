@@ -10,8 +10,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"clawbridge/internal/buildinfo"
+	"clawbridge/internal/bus"
+	"clawbridge/internal/doctor"
 	"clawbridge/internal/guibackend"
 	"clawbridge/internal/webui"
 )
@@ -79,11 +82,13 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 	}
 	defer in.Close()
 	c := in.Config
+	workspaceName, projectName := uiScopeNames(ctx, in.Executor, c)
 	backend.Hello = guibackend.Hello{
 		ClientVersion: buildinfo.Current().Version,
 		Mode:          c.Mode,
 		Platform:      platform,
-		Profile:       map[string]any{"workspace": c.Workspace, "project": c.Project, "waiting_for_project": in.Waiting},
+		Profile:       uiProfile(c, in.Waiting, hostName(), workspaceName, projectName),
+		Bundle:        srv.BundleID(),
 	}
 	backend.Methods = map[string]guibackend.Method{
 		"sessions.list": guibackend.SessionsList(in.Executor, guibackend.Scope{Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance}),
@@ -159,4 +164,50 @@ func handOffUI(ctx context.Context, stateDir, profile, platform string, noOpen b
 	fmt.Fprintf(stdout, "ClawBridge UI is already running on %s; opening a new tab.\n", h.URL)
 	openUI(ctx, stderr, webui.FileRoute(platform), func(ctx context.Context) (bool, error) { return uiOpener(platform)(ctx, h.Target) })
 	return nil
+}
+
+// hostName is this device's name for the page's "This device" line; empty
+// when the system does not say.
+func hostName() string {
+	h, _ := os.Hostname()
+	return h
+}
+
+// uiScopeNames is the names the page shows for the workspace and the
+// project, from one whoami read. A name is never worth a failed start: with no
+// answer, or no name in it, each falls back to its ID or slug.
+func uiScopeNames(ctx context.Context, executor doctor.Executor, c Config) (workspace, project string) {
+	workspace, project = c.Workspace, c.Project
+	if executor == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	r, err := executor.Execute(ctx, bus.Request{Operation: "whoami", Workspace: c.Workspace, Project: c.Project, Args: map[string]any{}})
+	if err != nil {
+		return
+	}
+	d, _ := asMap(r.Data)
+	w, _ := d["workspace"].(map[string]any)
+	if n := field(w, "name"); n != "" {
+		workspace = n
+	}
+	p, _ := d["project"].(map[string]any)
+	if n := firstNonEmpty(field(p, "name"), field(p, "slug")); n != "" {
+		project = n
+	}
+	return
+}
+
+// uiProfile is hello's profile summary: the scope (by name when names knows
+// one), who is signed in (the principal the profile records, which the page
+// shows as an initial) and this device's name. No key, token or path.
+func uiProfile(c Config, waiting bool, device, workspace, project string) map[string]any {
+	return map[string]any{
+		"workspace":           workspace,
+		"project":             project,
+		"waiting_for_project": waiting,
+		"principal":           c.Principal,
+		"device":              device,
+	}
 }

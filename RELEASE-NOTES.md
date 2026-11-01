@@ -29,6 +29,11 @@
   its lane, and move issues between its lane's teams; the usage text and docs now say so. No schema change. Linear
   config scope: none.
 
+## Sessions
+
+- **`clawbridge ui` opens a local web UI (read-only for now: sessions and doctor) on 127.0.0.1, stopping a minute after
+  its tab closes.** Docs: docs/usage.md, "Web interface". No schema change. Linear config scope: none.
+
 # ClawBridge v1.0.1 (released 3 Nov)
 
 **ClawBridge 1.0.1** is a fixes release on 1.0.0. Intake holds an issue's title and description to what the trusted

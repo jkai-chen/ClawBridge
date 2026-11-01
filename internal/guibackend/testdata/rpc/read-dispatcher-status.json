@@ -1,0 +1,54 @@
+{
+  "description": "dispatcher.status answers the model doctor, the policy and the hour's budget",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "dispatcher.status",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "budget": {
+        "by": {
+          "agents": 123,
+          "people": 20
+        },
+        "limit": 600,
+        "source": "app",
+        "used": 143,
+        "window_resets_at": "2026-10-31T10:00:00Z"
+      },
+      "denied": "",
+      "doctor": {
+        "holders": [
+          {
+            "agent": "running",
+            "agent_status": "running",
+            "config_revision": 2,
+            "key": "active",
+            "principal": "mara@example.test",
+            "you": true
+          }
+        ],
+        "model_on": true,
+        "seal_configured": true,
+        "seal_previous": false
+      },
+      "view": {
+        "enabled": true,
+        "mode": "model",
+        "model": {
+          "agent": "running",
+          "key": "active",
+          "model": "example-model-1",
+          "provider_id": "example-ai",
+          "use": "engine"
+        },
+        "revision": 5,
+        "updated_at": "2026-10-30T10:00:00Z"
+      }
+    }
+  }
+}

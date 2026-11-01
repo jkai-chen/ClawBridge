@@ -628,6 +628,10 @@ func TestRPCFixtures(t *testing.T) {
 	delete(s.Methods, "echo")
 	h := s.Handler()
 	for _, file := range files {
+		// The read-* fixtures are played by TestReadFixtures (readpages_test.go).
+		if strings.HasPrefix(filepath.Base(file), "read-") {
+			continue
+		}
 		raw, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)

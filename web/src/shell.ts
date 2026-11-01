@@ -5,7 +5,12 @@ import { h, setChildren, visible } from "./dom";
 import { icon, mark } from "./icons";
 import { go, parseRoute, type RouteId } from "./router";
 import { ConnectionError, type ConnState } from "./transport";
+import { accountView } from "./views/account";
+import { dispatcherView } from "./views/dispatcher";
 import { doctorView } from "./views/doctor";
+import { linearView } from "./views/linear";
+import { projectsView } from "./views/projects";
+import { teamsView } from "./views/teams";
 import { overviewView } from "./views/overview";
 import { placeholder } from "./views/placeholder";
 import { sessionsView } from "./views/sessions";
@@ -32,11 +37,11 @@ const VIEWS: Record<RouteId, View> = {
   overview: overviewView,
   "needs-you": placeholder({ title: "Needs you", question: "What is waiting on me, and what do I do about it?" }),
   sessions: sessionsView,
-  projects: placeholder({ title: "Projects", question: "Which projects am I in and how are they bound?" }),
-  teams: placeholder({ title: "Teams & People", question: "Who works on each bound team, and what may each person and their agents do?" }),
-  linear: placeholder({ title: "Linear", question: "Is the board connected and are agent writes flowing?" }),
-  dispatcher: placeholder({ title: "Dispatcher", question: "Is routing working, and is model mode safe to use?" }),
-  account: placeholder({ title: "Account", question: "Which devices and invites does this account have?" }),
+  projects: projectsView,
+  teams: teamsView,
+  linear: linearView,
+  dispatcher: dispatcherView,
+  account: accountView,
   doctor: doctorView,
   settings: settingsView,
 };

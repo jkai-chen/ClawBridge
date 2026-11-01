@@ -1,0 +1,89 @@
+{
+  "description": "teams.roles answers the roles mapping with names",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "teams.roles",
+    "params": {
+      "profile": "lp_mara"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "names_err": "",
+      "owner": true,
+      "people": [
+        {
+          "linear_user_id": "lin_mara",
+          "principal": "mara@example.test",
+          "role": "lead",
+          "teams": [
+            "team_atl"
+          ]
+        },
+        {
+          "linear_user_id": "lin_kofi",
+          "principal": "kofi@example.test",
+          "role": "engineer",
+          "teams": [
+            "team_atl",
+            "team_hrb"
+          ]
+        },
+        {
+          "linear_user_id": "lin_ines",
+          "principal": "ines@example.test",
+          "role": "reviewer",
+          "teams": [
+            "team_atl",
+            "team_hrb"
+          ]
+        },
+        {
+          "linear_user_id": "lin_tomas",
+          "principal": "tomas@example.test",
+          "role": "engineer",
+          "teams": [
+            "team_hrb"
+          ]
+        }
+      ],
+      "revision": 7,
+      "teams": [
+        {
+          "bound": true,
+          "leads": [
+            "lin_mara"
+          ],
+          "team_id": "team_atl"
+        },
+        {
+          "bound": true,
+          "leads": [
+            "lin_ines"
+          ],
+          "team_id": "team_hrb"
+        }
+      ],
+      "users": [
+        {
+          "active": true,
+          "guest": false,
+          "id": "lin_mara",
+          "name": "Mara Lindqvist"
+        },
+        {
+          "active": true,
+          "guest": false,
+          "id": "lin_priya",
+          "name": "Priya Raman"
+        }
+      ],
+      "you_lead": [
+        "team_atl"
+      ]
+    }
+  }
+}

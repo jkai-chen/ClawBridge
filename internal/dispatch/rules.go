@@ -43,6 +43,16 @@ func LabelDomains(issue Issue, domains []bus.DispatcherDomain) []bus.DispatcherD
 	return out
 }
 
+// trustedNowhere reports whether no project domain trusts the session.
+func trustedNowhere(c Case) bool {
+	for _, d := range c.Domains {
+		if len(d.Match.LinearProjects) > 0 && trusted(c.Session, d) {
+			return false
+		}
+	}
+	return true
+}
+
 // NeedsRead reports whether the authoritative read is worth its Linear call.
 // It is when the claim could be confirmed: the client's facts point at
 // exactly one project domain that trusts the session, which is active. It is
@@ -51,9 +61,33 @@ func LabelDomains(issue Issue, domains []bus.DispatcherDomain) []bus.DispatcherD
 // may find one; whether the session is trusted is then decided on its facts.
 // Label domains never grant, so with none matching by project a read buys
 // nothing. A claim with no issue has nothing to read either.
+//
+// A stale session (still status active) is read only when it could never be
+// confirmed: the claim names an issue, some domain matches by project and the
+// session is trusted in none of the project domains. The read then only routes
+// the escalation to the right domain, so it is not left waiting out the idle
+// window. A stale session trusted in some project domain is a sleeping laptop
+// (DP-L1): it waits as before and spends no read per tick. Retired and moved
+// sessions are never read.
 func NeedsRead(c Case) bool {
-	if c.Session.Status != sessionActive || c.Session.Presence == presenceStale {
+	if c.Session.Status != sessionActive {
 		return false
+	}
+	if c.Session.Presence == presenceStale {
+		if c.Issue.ID == "" {
+			return false
+		}
+		matched := false
+		for _, d := range c.Domains {
+			if len(d.Match.LinearProjects) == 0 {
+				continue
+			}
+			if trusted(c.Session, d) {
+				return false
+			}
+			matched = true
+		}
+		return matched
 	}
 	if c.Issue.ProjectID == "" {
 		// A paths-only claim names no issue to read.
@@ -96,7 +130,15 @@ func Rules(c Case, readFailed bool, waits int, age time.Duration) Proposal {
 		}
 		return Proposal{Wait, "facts_unavailable", domainOf()}
 	}
-	if c.Session.Presence == presenceStale {
+	// A stale session trusted in no project domain can never be confirmed, so
+	// its claim does not wait for the session to wake: it skips the stale wait
+	// and the domain logic below tells a person at once. Only the authoritative
+	// read proves the domain, and NeedsRead reads for a stale session only when
+	// it is trusted in no project domain, so a stale claim on client facts
+	// still waits. A closed issue keeps its place after the stale block.
+	skipStale := c.Session.Presence == presenceStale && c.Issue.Authoritative &&
+		openStates[c.Issue.StateType] && trustedNowhere(c)
+	if c.Session.Presence == presenceStale && !skipStale {
 		// A sleeping laptop: wait a while, then a person decides (DP-L1).
 		if age < staleAfter(c)/4 {
 			return Proposal{Wait, "session_stale", domainOf()}

@@ -1,0 +1,47 @@
+{
+  "description": "project.threads answers project_threads for a project the viewer owns",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "project.threads",
+    "params": {
+      "project": "atlas-api"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "data": {
+        "next": "",
+        "readable_from": "2026-10-01T00:00:00Z",
+        "threads": [
+          {
+            "kind": "direct",
+            "last_at": "2026-10-31T09:30:00Z",
+            "messages": 3,
+            "participants": [
+              "atlas/billing-retry",
+              "lead-atlas"
+            ],
+            "participants_more": 0,
+            "started_at": "2026-10-31T08:00:00Z",
+            "thread_id": "thr_1"
+          },
+          {
+            "kind": "escalation",
+            "last_at": "2026-10-30T14:05:00Z",
+            "messages": 1,
+            "participants": [
+              "harbor/a11y-audit"
+            ],
+            "participants_more": 2,
+            "started_at": "2026-10-30T14:00:00Z",
+            "thread_id": "thr_2"
+          }
+        ]
+      },
+      "source": "server"
+    }
+  }
+}

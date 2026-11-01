@@ -1,0 +1,28 @@
+{
+  "description": "linear.cancelKinds answers who may cancel",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.cancelKinds",
+    "params": {
+      "profile": "lp_mara"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "view": {
+        "agent_may_cancel_kinds": [
+          "duplicate"
+        ],
+        "kinds": [
+          "duplicate",
+          "canceled"
+        ],
+        "line": "Agents may cancel in: duplicate.",
+        "revision": 3
+      }
+    }
+  }
+}

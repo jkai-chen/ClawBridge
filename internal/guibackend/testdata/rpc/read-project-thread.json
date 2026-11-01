@@ -1,0 +1,55 @@
+{
+  "description": "project.thread answers one thread's messages",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "project.thread",
+    "params": {
+      "project": "atlas-api",
+      "thread_id": "thr_1"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "data": {
+        "messages": [
+          {
+            "address": "lead-atlas",
+            "body": "May I take ATL-212?",
+            "coordination": "",
+            "created_at": "2026-10-31T08:00:00Z",
+            "id": "msg_1",
+            "kind": "question",
+            "recipients": [
+              {
+                "delivered_at": "2026-10-31T08:00:01Z",
+                "name": "lead-atlas",
+                "read_at": "2026-10-31T08:02:00Z"
+              }
+            ],
+            "reply_to": "",
+            "sender": "atlas/billing-retry",
+            "sequence": 1
+          },
+          {
+            "address": "atlas/billing-retry",
+            "body": "Yes, go ahead.",
+            "coordination": "",
+            "created_at": "2026-10-31T08:03:00Z",
+            "id": "msg_2",
+            "kind": "answer",
+            "recipients": [],
+            "reply_to": "msg_1",
+            "sender": "lead-atlas",
+            "sequence": 2
+          }
+        ],
+        "next": 0,
+        "readable_from": "2026-10-01T00:00:00Z"
+      },
+      "source": "server"
+    }
+  }
+}

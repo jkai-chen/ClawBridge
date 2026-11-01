@@ -1,0 +1,73 @@
+{
+  "description": "teams.members answers the bound teams' Linear members and who is trusted",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "teams.members",
+    "params": {
+      "profile": "lp_mara"
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "members": [
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_mara",
+          "name": "Mara Lindqvist",
+          "team_id": "team_atl"
+        },
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_kofi",
+          "name": "Kofi Mensah",
+          "team_id": "team_atl"
+        },
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_ines",
+          "name": "Ines Duarte",
+          "team_id": "team_atl"
+        },
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_priya",
+          "name": "Priya Raman",
+          "team_id": "team_atl"
+        },
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_ines",
+          "name": "Ines Duarte",
+          "team_id": "team_hrb"
+        },
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_kofi",
+          "name": "Kofi Mensah",
+          "team_id": "team_hrb"
+        },
+        {
+          "active": true,
+          "eligibility_known": false,
+          "id": "lin_tomas",
+          "name": "Tomás Okafor",
+          "team_id": "team_hrb"
+        }
+      ],
+      "names_note": "",
+      "trusted": [
+        "lin_mara",
+        "lin_kofi"
+      ]
+    }
+  }
+}

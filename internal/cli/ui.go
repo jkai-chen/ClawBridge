@@ -103,6 +103,15 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 		"sessions.launchCommand": guibackend.LaunchCommand(newLaunchSource(flags, in)),
 	}
 
+	// P2-5: the Projects, Linear, Teams & People, Dispatcher and Account
+	// reads. Read-class only; the same requests the TUI makes.
+	for name, m := range guibackend.ReadMethods(guibackend.ReadDeps{
+		Exec: in.Executor, Linear: in.Linear, Hosted: c.Mode == "cloud", DeviceID: c.DeviceID,
+		Scope: guibackend.Scope{Workspace: c.Workspace, Project: c.Project},
+	}) {
+		backend.Methods[name] = m
+	}
+
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Push: outbox.count every 5 s, from the same drain the TUI's status

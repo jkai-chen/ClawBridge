@@ -342,3 +342,20 @@ tbody tr.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 .today-note { color: var(--muted); font-size: var(--fs-small); margin-top: 8px; }
 @media (max-width: 1279px) { .split.open { grid-template-columns: minmax(0, 1fr); } .drawer { position: static; } }
 .lanes-note { color: var(--muted); font-size: var(--fs-small); margin-top: 4px; }
+
+/* ---------- P2-5 read pages ---------- */
+.disabled-write { display: inline-flex; align-items: center; gap: 8px; }
+.plain-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.subnav { margin-bottom: 12px; }
+.stack { display: grid; gap: 12px; }
+.meter-row { margin: 10px 0; }
+.meter-lab { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.meter { height: 8px; border-radius: 999px; background: var(--raised); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--accent); }
+.meter.high > span { background: var(--pill-warning-ink); }
+.meter.full > span { background: var(--pill-negative-ink); }
+.msg { padding: 12px 16px; border-top: 1px solid var(--rule); }
+.msg:first-child { border-top: 0; }
+.msg .meta { color: var(--muted); font-size: var(--fs-small); margin-bottom: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+.panel .stack > .row-note { padding: 0 16px 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }

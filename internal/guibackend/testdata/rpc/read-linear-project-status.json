@@ -1,0 +1,34 @@
+{
+  "description": "linear.projectStatus answers a Linear project's status and a suggestion",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.projectStatus",
+    "params": {
+      "profile": "lp_mara",
+      "linear_project": "lp_billing",
+      "suggest": true
+    }
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "status": {
+        "issues": {
+          "complete": true,
+          "open": 0,
+          "total": 12
+        },
+        "linear_project": "lp_billing",
+        "status": {
+          "id": "",
+          "name": "In progress",
+          "type": ""
+        },
+        "suggestion": "completed",
+        "suggestion_note": "Every issue is closed."
+      }
+    }
+  }
+}

@@ -30,7 +30,8 @@ function noteRow(c: DoctorCheck): HTMLElement {
 
 export function doctorBody(report: DoctorReport): HTMLElement {
   const fails = report.checks.filter((c) => c.level === "fail");
-  const notes = report.checks.filter((c) => c.level === "warn" || c.level === "info");
+  // Warnings before notes, each group in the order the checks ran.
+  const notes = [...report.checks.filter((c) => c.level === "warn"), ...report.checks.filter((c) => c.level === "info")];
   const passes = report.checks.filter((c) => c.level === "pass");
   const root = h("div", null);
   if (report.checks.length === 0) {

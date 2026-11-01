@@ -259,7 +259,7 @@ describe("the app shell", () => {
 
   it("makes every other screen a placeholder that says 'Not in this build yet.'", async () => {
     const { host } = await mount();
-    for (const id of ["overview", "needs-you", "projects", "teams", "linear", "dispatcher", "account"]) {
+    for (const id of ["needs-you", "projects", "teams", "linear", "dispatcher", "account"]) {
       await visit(`#/${id}`);
       expect(host.querySelector(".empty b")?.textContent).toBe("Not in this build yet.");
     }

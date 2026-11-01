@@ -111,6 +111,26 @@ export function parseDoctor(raw: unknown): DoctorReport {
   };
 }
 
+// ---- sessions.launchCommand
+
+export type LaunchAgent = "claude-code" | "codex";
+
+export interface LaunchLine {
+  /** The exact line to paste in the person's own terminal. Copy it as is. */
+  line: string;
+  agent: string;
+  session: string;
+  /** The session's host, to tell this device from another. */
+  host: string;
+  /** Things to fix so this agent acts only as this session (another Codex entry that starts ClawBridge). */
+  warnings: string[];
+}
+
+export function parseLaunch(raw: unknown): LaunchLine {
+  const r = rec(raw);
+  return { line: str(r.line), agent: str(r.agent), session: str(r.session), host: str(r.host), warnings: Array.isArray(r.warnings) ? r.warnings.filter((w): w is string => typeof w === "string") : [] };
+}
+
 // ---- hello
 
 export interface Hello {
@@ -167,6 +187,10 @@ export class Api {
   }
   async doctor(): Promise<DoctorReport> {
     return parseDoctor(await this.rpc("doctor.checks"));
+  }
+  /** The backend builds the line and refuses a session another person owns. */
+  async launchCommand(session: string, agent: LaunchAgent): Promise<LaunchLine> {
+    return parseLaunch(await this.rpc("sessions.launchCommand", { session, agent }));
   }
   events(onEvent: Parameters<Transport["events"]>[0], onState: Parameters<Transport["events"]>[1]): () => void {
     return this.t.events(onEvent, onState);

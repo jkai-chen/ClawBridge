@@ -2,7 +2,8 @@
 
 ## Sessions
 
-- **`clawbridge ui` opens a local web UI (read-only for now: sessions and doctor) on 127.0.0.1, stopping a minute after its tab closes.** Docs: docs/usage.md, "Web interface". No schema change. Linear config scope: none.
+- **`clawbridge ui` opens a local web UI (read-only for now: overview, sessions and doctor) on 127.0.0.1, stopping a minute after its tab closes.** Docs: docs/usage.md, "Web interface". No schema change. Linear config scope: none.
+- **`clawbridge launch-command --session NAME [--agent claude-code|codex]` prints the shell line that starts one of your own sessions' agents in your terminal; the web UI's Sessions drawer has a Copy button for the same line.** It holds only `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE` and the agent with its MCP flag, never a key or token, and is refused for a session another person owns. For Claude Code it writes the session's MCP file under the state directory (`mcp/<session>.json`) if it is missing. Docs: docs/usage.md, "Launch command". No schema change. Linear config scope: none.
 
 # ClawBridge v1.0.0 (released 2 Nov)
 

@@ -675,6 +675,39 @@ a prior one, and `r` resets paging. Empty filtered pages can still have later
 pages. `mirror*` labels incomplete read-only coverage. Browsing does not mark
 mail read; explicit actions retain their normal authority checks.
 
+## Web interface
+
+```sh
+clawbridge ui
+clawbridge ui --no-open
+```
+
+`clawbridge ui` opens ClawBridge in your browser, served by the client on
+`127.0.0.1` (a random port, or `--port N`). It is read-only for now: Sessions
+and Doctor are live, and every other screen says "Not in this build yet."
+
+- **It stops by itself** one minute after the last tab closes, on Ctrl-C, and
+  after two minutes if no tab ever connects. It is never a daemon and never
+  starts at login.
+- **The link is single use.** On macOS and Linux the browser is opened through
+  a private launch file, so no token appears in a process list. On Windows and
+  WSL the browser is given the single-use link itself, which works once and
+  expires after a minute. `--no-open` prints a link that works once, for a
+  minute. A new tab opened by hand shows "Open this from `clawbridge ui`";
+  run the command again for a fresh one. A second `clawbridge ui` for the same
+  profile asks the running one for a new tab instead of starting another.
+- **Run it yourself, in your own terminal.** It refuses to start inside an
+  agent session.
+- **WSL:** run `clawbridge ui` inside WSL and use the Windows browser. It
+  opens with `wslview` if present, otherwise `cmd.exe /c start`, otherwise it
+  prints the link. This needs WSL2's localhost forwarding (on by default;
+  `localhostForwarding=true` in `.wslconfig`) or mirrored networking. The server
+  never binds anything but loopback, so with forwarding off the page cannot
+  be reached.
+- **A release binary includes the page.** A binary built from source without
+  building `web/` first shows a "UI isn't built into this binary" page; see
+  [development](development.md).
+
 ## Offline reads
 
 `clawbridge sync` explicitly saves a project-scoped read-only cloud snapshot.

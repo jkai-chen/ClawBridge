@@ -49,6 +49,25 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      # The web UI is built in this same job, from the committed lockfile with
+      # no install scripts, so the attested binaries embed this job's bundle
+      # and no artifact crosses jobs (GUI-DESIGN 12.1, R1-T8). The bundle goes
+      # to the gitignored internal/webui/dist/app, which build-release.sh's
+      # clean-tree check does not count.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+      - name: Build the web UI bundle
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      # The embedded bundle must be the real one and must match the manifest
+      # the build wrote; a placeholder fails here, before anything is built.
+      - name: Require the real web UI bundle
+        env:
+          CLAWBRIDGE_REQUIRE_UI_BUNDLE: '1'
+        run: go test -count=1 -run '^TestEmbeddedBundle$' ./internal/webui
       # A reachable vulnerability in the code or the Go standard library
       # fails the release before anything is built or published.
       - name: Check for reachable Go vulnerabilities
@@ -57,6 +76,19 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: bash scripts/build-release.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-assets"
+      # Every built binary carries the bundle: its entry script's name is in
+      # the binary's embedded file table. (Binaries are searched, not run.)
+      - name: Require the bundle in every binary
+        run: |
+          entry=$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' internal/webui/dist/app/manifest.sha256 | head -1)
+          [[ -n $entry ]] || { echo "::error::the bundle manifest names no entry script"; exit 1; }
+          n=0
+          for bin in "$RUNNER_TEMP"/release-assets/clawbridge_*; do
+            [[ -f $bin ]] || continue
+            grep -aqF "dist/app/$entry" "$bin" || { echo "::error::$(basename "$bin") does not embed the web UI bundle"; exit 1; }
+            n=$((n + 1))
+          done
+          [[ $n -ge 1 ]] || { echo "::error::no binaries found to check"; exit 1; }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets

@@ -131,3 +131,20 @@ commits, manifests, actual CI runs and evidence limits are in
 [the archive](archive/README.md). Retain the distinction between automated fixture
 success, actual platform execution and owner-reported observations when recording
 new results.
+
+## The web UI
+
+`web/` holds the page `clawbridge ui` serves (TypeScript and Vite, no
+framework). `npm ci --ignore-scripts && npm run build` there writes the bundle
+and its `manifest.sha256` to `internal/webui/dist/app/`, which git ignores.
+`internal/webui/dist/index.html`, a hand-written "UI not built" page, stays
+committed, so a plain `go build` always works and embeds it. The server serves
+`dist/app` when it has an `index.html`, else the placeholder, and reports
+`bundle` ("placeholder" or the manifest's sha256) in `hello`. The release job
+builds the bundle before the attested `go build` and fails if it is the
+placeholder. `npm run check` is typecheck, lint (no HTML sinks, no
+`EventSource`) and unit tests; `web/e2e/run.sh BINARY` drives a built binary in
+headless Chrome (`CHROME_PATH`). In a tree with a built bundle,
+`TestPlaceholderBundleIsEmbedded` skips; remove `internal/webui/dist/app` to run it.
+The server Docker image builds `./cmd/clawbridge` without a web build, so it
+embeds the placeholder page on purpose: the server never serves the UI.

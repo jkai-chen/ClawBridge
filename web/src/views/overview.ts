@@ -1,11 +1,13 @@
 import type { SessionRow } from "../api";
 import { CallError } from "../api";
 import { ConnectionError } from "../transport";
-import { h, rich } from "../dom";
+import { h } from "../dom";
 import { hhmm, plural } from "../format";
 import { lanesChart, laneKind } from "../lanes";
 import { isArchived, stateWord } from "../sessionstate";
+import { parseNeeds, type Needs } from "../needs";
 import { errorBlock, skBar, stamp, titleRow, type View, type ViewCtx } from "./common";
+import { needsOverviewBlock } from "./needs";
 
 /** The counts the Today strip can compute from the session list; a cell the data cannot back is left out. */
 export interface TodayCell {
@@ -31,20 +33,6 @@ function stripEl(cells: readonly TodayCell[]): HTMLElement {
 
 function secHead(title: string, meta?: string): HTMLElement {
   return h("div", { class: "sec-head" }, h("h2", { text: title }), meta ? h("span", { class: "meta", text: meta }) : null);
-}
-
-/**
- * The Needs-you queue (needs.list) is a later build, so this block must not say
- * nothing needs the person. It names the commands that list these today.
- */
-function needsBlock(): HTMLElement {
-  return h("section", { class: "section", "data-block": "needs" },
-    secHead("Needs you"),
-    h("div", { class: "panel needs-empty" },
-      h("b", { text: "Needs you arrives in a later build." }),
-      h("span", null, rich("Until then, check `clawbridge dispatcher escalations`, `clawbridge sessions --assignment-state proposed`, `clawbridge intake list` and `clawbridge doctor`.")),
-    ),
-  );
 }
 
 function skeleton(): HTMLElement {
@@ -78,6 +66,17 @@ export const overviewView: View = (ctx: ViewCtx) => {
           if (!ctx.isCurrent()) return off();
           strip.replaceChildren(stripEl(todayCells(rows, n)));
         });
+        // The Needs you block fills in when needs.list answers; it never holds the lanes back.
+        const needsHost = h("div", null, needsOverviewBlock(null, "", () => ctx.go("needs-you")));
+        const showNeeds = (needs: Needs | null, failed: string) => {
+          if (ctx.isCurrent()) needsHost.replaceChildren(needsOverviewBlock(needs, failed, () => ctx.go("needs-you")));
+        };
+        const loadNeeds = () => api.rpc("needs.list").then(
+          (raw) => { const n = parseNeeds(raw); if (ctx.isCurrent()) ctx.setBadge("needs-you", n.items.length); showNeeds(n, ""); },
+          (e: unknown) => showNeeds(null, e instanceof Error ? e.message : String(e)),
+        );
+        const offNeeds = ctx.needsChanged?.(() => { if (ctx.isCurrent()) void loadNeeds(); else offNeeds?.(); });
+        void loadNeeds();
         root.replaceChildren(
           titleRow("Overview", finding, [stamp(offline ? (at ? `Copy from ${at}` : "Saved copy") : `Updated ${at}`), h("button", { class: "btn sm", type: "button", on: { click: load }, text: "Refresh" })]),
           h("section", { class: "section", "data-block": "lanes" },
@@ -88,7 +87,7 @@ export const overviewView: View = (ctx: ViewCtx) => {
               h("p", { class: "lanes-note", text: "Each bar is the session's state since its last update. Past states arrive in a later build." }),
             ),
           ),
-          needsBlock(),
+          needsHost,
           h("section", { class: "section" }, secHead("Today"), strip),
         );
       },

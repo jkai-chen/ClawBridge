@@ -203,6 +203,7 @@ td.who { white-space: nowrap; }
 .btn.icon.sm { width: 28px; }
 .btn[disabled], .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; pointer-events: auto; }
 .btn[disabled]:hover { background: var(--surface); }
+.btn.is-disabled, .btn.is-disabled:hover { background: transparent; color: var(--muted); border-color: var(--control); border-style: dashed; opacity: 1; cursor: not-allowed; transform: none; }
 .btn.primary[disabled]:hover { background: var(--primary); opacity: .45; }
 .field { display: grid; gap: 8px; min-width: 0; }
 .field > label, .lbl { font-weight: 500; }
@@ -359,3 +360,45 @@ tbody tr.pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 .msg .meta { color: var(--muted); font-size: var(--fs-small); margin-bottom: 4px; display: flex; gap: 8px; flex-wrap: wrap; }
 .panel .stack > .row-note { padding: 0 16px 12px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- Needs you ---------- */
+.fchips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.fchips button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--control); background: var(--surface); color: var(--muted); cursor: pointer; font-weight: 500; }
+.fchips button[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: transparent; }
+.fchips .n { font-variant-numeric: tabular-nums; opacity: .8; }
+.kind-notes { display: grid; gap: 8px; margin-bottom: 16px; }
+.nlist { display: grid; align-content: start; border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; background: var(--surface); }
+.nlist .pad { padding: 16px; }
+.nrow { display: grid; gap: 4px; padding: 12px 16px; cursor: pointer; }
+.nrow + .nrow { border-top: 1px solid var(--rule); }
+.nrow[data-sel="true"] { background: var(--raised); }
+.nrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.nrow .l1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nrow .ttl { font-weight: 500; overflow-wrap: anywhere; }
+.nrow .acts { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.ndetail { position: sticky; top: 0; display: grid; gap: 16px; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.ndetail h2 { font-size: var(--fs-section); line-height: 24px; font-weight: 600; overflow-wrap: anywhere; }
+.ndetail .kind-line { margin-bottom: 8px; }
+.ndetail .nbody { display: grid; gap: 16px; }
+.ndetail .preview { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ndetail .nfoot { display: grid; gap: 8px; }
+.ndetail .nfoot .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.ndetail .note, .who-may { color: var(--muted); font-size: var(--fs-small); }
+.ovneeds .row .ttl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Settings → Updates ---------- */
+.upd-card { border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; display: grid; gap: 12px; margin-bottom: 16px; }
+.upd-card h3 { font-size: var(--fs-section); line-height: 24px; font-weight: 600; }
+.upd-card.warn { border-color: var(--notice-edge); background: var(--notice-bg); }
+.upd-card.neg { border-color: var(--negative); }
+.upd-card pre { margin: 0; padding: 10px 12px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-control); font-family: var(--mono); font-size: 13px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.upd-card .card-head { display: flex; align-items: center; gap: 8px; }
+.upd-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.upd-note { color: var(--muted); font-size: 13px; }
+.upd-note.gap { margin-left: 12px; }
+.stack.tight { display: grid; gap: 2px; }
+.flagnote { margin-left: 8px; color: var(--muted); font-size: var(--fs-small); }
+.switchrow { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.switchrow .t b { font-weight: 500; display: block; }
+.switchrow .t span { color: var(--muted); }
+.lbl.stamp { color: var(--muted); font-size: var(--fs-small); }

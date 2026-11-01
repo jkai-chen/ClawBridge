@@ -1,0 +1,278 @@
+{
+  "description": "needs.list composes the queue from existing reads; every action is disabled in P2",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "needs.list"
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+      "items": [
+        {
+          "kind": "escalation",
+          "id": "esc_1",
+          "title": "atlas-billing needs an answer on ATL-212",
+          "project": "atlas",
+          "created_at": "2026-01-02T03:00:00Z",
+          "facts": {
+            "issue": "ATL-212",
+            "options": "approve, release, wait",
+            "reason": "overlap",
+            "revision": "14",
+            "session": "atlas-billing"
+          },
+          "preview": "Take ATL-212? It overlaps a claim.",
+          "actions": [
+            {
+              "id": "approve-claim",
+              "label": "Approve claim",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "release",
+              "label": "Release",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "wait",
+              "label": "Wait",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "yes",
+            "text": "You can approve this as the project owner."
+          }
+        },
+        {
+          "kind": "claim",
+          "id": "asg_1",
+          "title": "harbor-a11y proposed HRB-88",
+          "project": "atlas",
+          "created_at": "2026-01-02T03:10:00Z",
+          "facts": {
+            "issue": "HRB-88",
+            "revision": "3",
+            "session": "harbor-a11y"
+          },
+          "actions": [
+            {
+              "id": "approve",
+              "label": "Approve",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "release",
+              "label": "Release",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "send-to-session",
+              "label": "Send to session",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "yes",
+            "text": "You can approve this as the project owner."
+          }
+        },
+        {
+          "kind": "intake",
+          "id": "11111111-1111-1111-1111-111111111111",
+          "title": "HRB-91 is queued for an agent",
+          "project": "atlas",
+          "created_at": "2026-01-02T03:20:00Z",
+          "facts": {
+            "issue": "HRB-91",
+            "offers": "0",
+            "signals": "[\"S1\"]",
+            "state": "queued"
+          },
+          "actions": [
+            {
+              "id": "send-to-session",
+              "label": "Send to session",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "dismiss",
+              "label": "Dismiss",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "rearm",
+              "label": "Rearm",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "yes",
+            "text": "You can dismiss or rearm this as a project owner."
+          }
+        },
+        {
+          "kind": "person",
+          "id": "lin_ghost",
+          "title": "Linear person lin_ghost has no ClawBridge account",
+          "project": "atlas",
+          "facts": {
+            "linear_user": "lin_ghost",
+            "reason": "link_not_a_member",
+            "role": "engineer",
+            "teams": "team_hrb"
+          },
+          "actions": [
+            {
+              "id": "link",
+              "label": "Link…",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "invite",
+              "label": "Invite",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "yes",
+            "text": "You can link or invite as the workspace owner."
+          }
+        },
+        {
+          "kind": "person",
+          "id": "lin_priya",
+          "title": "Linear person lin_priya has no ClawBridge account",
+          "project": "atlas",
+          "facts": {
+            "linear_user": "lin_priya",
+            "reason": "no_link",
+            "role": "engineer",
+            "teams": "team_hrb"
+          },
+          "actions": [
+            {
+              "id": "link",
+              "label": "Link…",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "invite",
+              "label": "Invite",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "yes",
+            "text": "You can link or invite as the workspace owner."
+          }
+        },
+        {
+          "kind": "doctor",
+          "id": "mcp.codex.clawbridge",
+          "title": "MCP entry",
+          "project": "atlas",
+          "created_at": "2026-01-02T03:04:05Z",
+          "facts": {
+            "check": "mcp.codex.clawbridge",
+            "fix": "clawbridge mcp install",
+            "status": "warn"
+          },
+          "preview": "points at an older binary",
+          "actions": [
+            {
+              "id": "fix",
+              "label": "Fix",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "dismiss",
+              "label": "Dismiss",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "n/a",
+            "text": "Anyone can see this; fixing it is local."
+          }
+        },
+        {
+          "kind": "doctor",
+          "id": "x",
+          "title": "Broken",
+          "project": "atlas",
+          "created_at": "2026-01-02T03:04:05Z",
+          "facts": {
+            "check": "x",
+            "status": "fail"
+          },
+          "preview": "bad",
+          "actions": [
+            {
+              "id": "fix",
+              "label": "Fix",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            },
+            {
+              "id": "dismiss",
+              "label": "Dismiss",
+              "enabled": false,
+              "reason": "Not in this build yet."
+            }
+          ],
+          "who_may_act": {
+            "state": "n/a",
+            "text": "Anyone can see this; fixing it is local."
+          }
+        }
+      ],
+      "kinds": [
+        {
+          "kind": "escalation",
+          "status": "ok",
+          "count": 1
+        },
+        {
+          "kind": "claim",
+          "status": "ok",
+          "count": 1
+        },
+        {
+          "kind": "intake",
+          "status": "ok",
+          "count": 1
+        },
+        {
+          "kind": "person",
+          "status": "ok",
+          "count": 2
+        },
+        {
+          "kind": "doctor",
+          "status": "ok",
+          "count": 2
+        }
+      ],
+      "generated_at": "2026-01-02T10:42:00Z",
+      "viewer_role": "owner"
+    }
+  }
+}

@@ -19,6 +19,8 @@ export interface ViewCtx {
   /** The queued-writes count the client pushes (outbox.count); null until it has said, and in local mode. */
   outbox: { get(): number | null; subscribe(fn: (n: number) => void): () => void };
   go(path: string): void;
+  /** Calls fn when the client pushes needs.changed; returns the unsubscribe. Absent in a bare test context. */
+  needsChanged?(fn: () => void): () => void;
 }
 
 export type View = (ctx: ViewCtx) => void;

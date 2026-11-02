@@ -36,6 +36,11 @@
   the issue delegated again, or a project lead or owner rearms it from their own terminal, confirms the text they
   see, and the issue hasn't changed since. Before, the hashes kept at the signal were never checked.
   No schema change. Linear config scope: none.
+- **Fewer false intake flags.** When an issue changed after a trusted signal, intake now reads Linear's history: if
+  only other fields changed (priority, labels, state), the text is held as vouched instead of flagged. A flag it
+  can't rule out still says the text may have changed, and the issue read now shows `maybe: true` for it;
+  `intake list` keeps it apart from a confirmed change. `intake rearm --help` now lists `--confirm` and explains
+  the vouch. No schema change. Linear config scope: none.
 
 ## Install and upgrade
 

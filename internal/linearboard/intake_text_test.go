@@ -101,3 +101,27 @@ func TestTheCommentsReadCarriesTheVerdictToo(t *testing.T) {
 		t.Fatal(got.Intake, x.sent)
 	}
 }
+
+// The issue read tells a maybe flag from a definite one; changed stays true
+// for both.
+func TestExecuteIssueShowsMaybeApartFromChanged(t *testing.T) {
+	s, _, _, scope := testV2(t)
+	x := &textExecutor{Executor: s.cfg.Executor}
+	s.cfg.Executor = x
+	read := func() *linearprovider.IntakeText {
+		t.Helper()
+		out, e := s.ExecuteV2(context.Background(), scope, "issue", map[string]any{"id": issueID})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return out.(linearprovider.IssueV2).Intake
+	}
+	x.answer = map[string]any{"tracked": true, "changed": true, "maybe": true, "signal_at": "2026-10-23T10:00:00Z"}
+	if got := read(); got == nil || !got.TextChangedSinceSignal || !got.Maybe {
+		t.Fatal("maybe:", got)
+	}
+	x.answer = map[string]any{"tracked": true, "changed": true, "maybe": false, "signal_at": "2026-10-23T10:00:00Z"}
+	if got := read(); got == nil || !got.TextChangedSinceSignal || got.Maybe {
+		t.Fatal("definite:", got)
+	}
+}

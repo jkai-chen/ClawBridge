@@ -259,7 +259,8 @@ returns label names only, and returns `description_sha256`, the SHA-256 of the
 description it read. For an issue the project's intake queue is holding to the text
 a trusted signal vouched for, it also returns `intake`, with `text_changed_since_signal`
 (the server's stored verdict: true once its own read found the title or description
-different from that text) and `signal_at`; an issue intake does not track has no
+different from that text, or, with `maybe: true`, when the issue changed after the signal and Linear's history
+could not show it was another field) and `signal_at`; an issue intake does not track has no
 `intake` field. The read itself compares nothing and changes nothing. With `comments: true` it also returns `comments` (bodies as
 `untrusted_body`), `comments_complete`, `comments_truncated`, `comments_order`,
 `comments_walk_direction` and `comments_output_order` (the deprecated

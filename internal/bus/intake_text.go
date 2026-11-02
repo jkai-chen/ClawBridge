@@ -16,10 +16,12 @@ import (
 // hashes here: if either differs, the row is marked and the coordinator is
 // told once. A client's issue read never compares: it shows the stored mark.
 //
-// The mark lives in the row's reason column in two forms, both prefixed
+// The mark lives in the row's reason column in four forms, all prefixed
 // text_ (isTextMark): text_changed (changed, and the change notice went
 // out) and text_changed_unsent (changed, but no coordinator could be told
-// yet). Another path writes reason too: intakeNotice sets no_recipient on
+// yet); text_maybe and text_maybe_unsent are the same two for a flag that
+// is only a maybe (textFlag.maybe), so a delivered maybe keeps its hedge
+// (FR58). Another path writes reason too: intakeNotice sets no_recipient on
 // a row it could tell nobody about. So a mark that could not be announced
 // is kept as unsent, never claimed as told, and the row's notified_at says
 // whether the original notice ever went out; IntakeTextRetry delivers both
@@ -30,8 +32,10 @@ const (
 	intakeTextUnsent  = "text_changed_unsent"
 	// intakeTextMaybeUnsent is intakeTextUnsent for a flag set at queueing
 	// (textFlag.maybe): its notice, when it goes out, says the text may have
-	// changed, not that it did.
+	// changed, not that it did. intakeTextMaybe is that flag once the notice
+	// went out, as intakeTextChanged is for a definite one.
 	intakeTextMaybeUnsent = "text_maybe_unsent"
+	intakeTextMaybe       = "text_maybe"
 	// sqlTextMark is the predicate for a text mark, on reason.
 	sqlTextMark = `substr(reason,1,5)='text_'`
 	// sqlClearTextMark is the reason a cleared mark leaves.
@@ -40,11 +44,19 @@ const (
 
 func isTextMark(reason string) bool { return strings.HasPrefix(reason, "text_") }
 
+// isMaybeMark reports whether a text mark is only a maybe.
+func isMaybeMark(reason string) bool {
+	return reason == intakeTextMaybe || reason == intakeTextMaybeUnsent
+}
+
 // IntakeTextStatus is what a text check found. Tracked is false for an
 // issue with no live queue row, or a row that kept no hashes.
 type IntakeTextStatus struct {
 	Tracked bool `json:"tracked"`
 	Changed bool `json:"changed"`
+	// Maybe: the flag says the issue changed after the signal, which need
+	// not be its text (check the history). Changed stays true for it.
+	Maybe bool `json:"maybe"`
 	// SignalAt is the issue's updated_at as the trusted signal saw it.
 	SignalAt string `json:"signal_at,omitempty"`
 }
@@ -88,9 +100,10 @@ func intakeTextRow(ctx context.Context, tx *transaction, pid, issue string) (map
 func intakeTextStatus(ctx context.Context, tx *transaction, pid, issue string) (map[string]any, error) {
 	row, tracked, err := intakeTextRow(ctx, tx, pid, issue)
 	if err != nil || !tracked {
-		return map[string]any{"tracked": false, "changed": false}, err
+		return map[string]any{"tracked": false, "changed": false, "maybe": false}, err
 	}
-	return map[string]any{"tracked": true, "changed": isTextMark(str(row, "reason")), "signal_at": str(row, "queued_updated_at")}, nil
+	reason := str(row, "reason")
+	return map[string]any{"tracked": true, "changed": isTextMark(reason), "maybe": isMaybeMark(reason), "signal_at": str(row, "queued_updated_at")}, nil
 }
 
 // intakeTextCheck compares the app's hashes with the row's. Only the
@@ -102,8 +115,8 @@ func (s *Store) intakeTextCheck(ctx context.Context, tx *transaction, w map[stri
 	}
 	queuedTitle, queuedDescription := str(row, "queued_title_sha256"), str(row, "queued_description_sha256")
 	st := IntakeTextStatus{Tracked: true, SignalAt: str(row, "queued_updated_at")}
-	if isTextMark(str(row, "reason")) {
-		st.Changed = true
+	if reason := str(row, "reason"); isTextMark(reason) {
+		st.Changed, st.Maybe = true, isMaybeMark(reason)
 		return st, nil
 	}
 	differs := func(queued, current string) bool { return queued != "" && current != "" && queued != current }
@@ -137,18 +150,18 @@ func (s *Store) markText(ctx context.Context, tx *transaction, w map[string]any,
 	if err != nil {
 		return err
 	}
-	mark := intakeTextUnsent
+	mark, delivered := intakeTextUnsent, intakeTextChanged
 	if flag.maybe {
-		mark = intakeTextMaybeUnsent
+		mark, delivered = intakeTextMaybeUnsent, intakeTextMaybe
 	}
 	if len(targets) > 0 && mode {
-		mark = intakeTextChanged
+		mark = delivered
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE intake_queue SET reason=? WHERE project_id=? AND issue_uuid=? AND NOT (`+sqlTextMark+`)`, mark, pid, issue)
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 || mark != intakeTextChanged {
+	if n, _ := res.RowsAffected(); n == 0 || mark != delivered {
 		return nil
 	}
 	return s.deliverTextNotices(ctx, tx, w, pid, issue, row, targets[0], flag)
@@ -209,7 +222,11 @@ func (s *Store) IntakeTextRetry(ctx context.Context, pid string) error {
 		if len(targets) == 0 || !mode {
 			continue
 		}
-		res, e := tx.ExecContext(ctx, `UPDATE intake_queue SET reason=? WHERE project_id=? AND issue_uuid=? AND reason=?`, intakeTextChanged, pid, issue, str(row, "reason"))
+		delivered := intakeTextChanged
+		if str(row, "reason") == intakeTextMaybeUnsent {
+			delivered = intakeTextMaybe
+		}
+		res, e := tx.ExecContext(ctx, `UPDATE intake_queue SET reason=? WHERE project_id=? AND issue_uuid=? AND reason=?`, delivered, pid, issue, str(row, "reason"))
 		if e != nil {
 			return e
 		}
@@ -261,11 +278,20 @@ const IntakeSkew = 5 * time.Second
 
 // eventVouchesText reports whether a signal's issue read is the text its
 // trusted actor saw: the actor is trusted and proven, and the issue was not
-// updated more than IntakeSkew after the transition. An edit between the
-// transition and the poll fails this, so it cannot vouch for itself.
+// updated more than IntakeSkew after the transition, or (TextClean) Linear's
+// history shows that update was not to the title or description. An edit
+// between the transition and the poll fails this, so it cannot vouch for
+// itself. Every site that decides whether an event vouches (queueing, the
+// re-queue of a closed row, a re-vouch and a cap raise, through
+// eventRevouches) asks this one.
 func eventVouchesText(ev IntakeEvent) bool {
 	if !ev.Trusted || ev.Actor == "" || ev.Issue.TitleSHA256 == "" {
 		return false
+	}
+	// The history showed no text change after the transition (FR58), so a
+	// later update is of another field.
+	if ev.TextClean {
+		return true
 	}
 	happened, e := time.Parse(time.RFC3339Nano, ev.At)
 	if e != nil {

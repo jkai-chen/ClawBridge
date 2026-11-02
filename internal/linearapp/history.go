@@ -28,7 +28,7 @@ const HistoryAppName = "ClawBridge app"
 // caught.
 const (
 	issueScopeQuery   = `query IssueHistoryScope($id: String!) { issue(id: $id) { id team { id } project { id } } }`
-	issueHistoryQuery = `query IssueHistory($id: String!, $first: Int!, $after: String) { issue(id: $id) { id team { id } project { id } history(first: $first, after: $after) { nodes { createdAt actorId actor { id displayName app } botActor { id name } fromState { id name type } toState { id name type } fromAssignee { id displayName } toAssignee { id displayName } addedLabels { id name } removedLabels { id name } addedLabelIds removedLabelIds fromTeam { id key } toTeam { id key } fromProject { id name } toProject { id name } fromPriority toPriority fromParent { id identifier } toParent { id identifier } archived trashed } pageInfo { hasNextPage endCursor } } } }`
+	issueHistoryQuery = `query IssueHistory($id: String!, $first: Int!, $after: String) { issue(id: $id) { id team { id } project { id } history(first: $first, after: $after) { nodes { createdAt actorId actor { id displayName app } botActor { id name } fromState { id name type } toState { id name type } fromAssignee { id displayName } toAssignee { id displayName } addedLabels { id name } removedLabels { id name } addedLabelIds removedLabelIds fromTeam { id key } toTeam { id key } fromProject { id name } toProject { id name } fromPriority toPriority fromParent { id identifier } toParent { id identifier } archived trashed fromTitle toTitle updatedDescription } pageInfo { hasNextPage endCursor } } } }`
 )
 
 // GraphQLFunc runs one read-only query: App.GraphQL's shape.
@@ -125,6 +125,13 @@ type historyNode struct {
 	ToParent        *parentNode `json:"toParent"`
 	Archived        *bool       `json:"archived"`
 	Trashed         *bool       `json:"trashed"`
+	// Linear SDK schema, IssueHistory: fromTitle and toTitle are what the
+	// title was changed from and to; updatedDescription says the
+	// description was updated. Only the fact of a change is kept here, never
+	// a title or description text.
+	FromTitle          *string `json:"fromTitle"`
+	ToTitle            *string `json:"toTitle"`
+	UpdatedDescription *bool   `json:"updatedDescription"`
 }
 
 // HistoryPage is one page of an issue's history as Linear answered it.
@@ -304,6 +311,12 @@ type HistoryEntry struct {
 	Archived *bool                         `json:"archived,omitempty"`
 	Trashed  *bool                         `json:"trashed,omitempty"`
 	Other    bool                          `json:"other,omitempty"`
+	// TitleChanged and DescriptionUpdated are what the server's intake
+	// check reads (FR58) to tell a text edit from another change. They are
+	// not part of the client's history shape, and an entry that sets only
+	// them is still Other there.
+	TitleChanged       bool `json:"-"`
+	DescriptionUpdated bool `json:"-"`
 }
 
 // Entries maps the page's nodes, in Linear's order (newest first). appUser
@@ -347,6 +360,9 @@ func (p HistoryPage) Entries(appUser string, stored map[string]string) []History
 			e.Trashed = n.Trashed
 		}
 		e.Other = e.State == nil && e.Assignee == nil && e.Labels == nil && e.Team == nil && e.Project == nil && e.Priority == nil && e.Parent == nil && e.Archived == nil && e.Trashed == nil
+		// A title changed when Linear names a side and the two differ.
+		e.TitleChanged = (n.FromTitle != nil || n.ToTitle != nil) && (n.FromTitle == nil || n.ToTitle == nil || *n.FromTitle != *n.ToTitle)
+		e.DescriptionUpdated = n.UpdatedDescription != nil && *n.UpdatedDescription
 		out = append(out, e)
 	}
 	return out

@@ -56,6 +56,12 @@ type fakeLinear struct {
 	// delegatedMore makes every delegated page say there is another.
 	delegatedMore bool
 	history       map[string][]map[string]any
+	// textHist answers the app's issue history read (FR58) by issue, newest
+	// first; textHistErr fails it, and textHistMore says there is always
+	// another page.
+	textHist     map[string][]map[string]any
+	textHistErr  error
+	textHistMore bool
 	// historyErr fails every history read.
 	historyErr error
 	// historyOnly limits historyErr to one history query, when set.
@@ -360,6 +366,19 @@ func (a fakeApp) GraphQL(ctx context.Context, query string, vars map[string]any,
 		return ctx.Err()
 	}
 	var data any
+	if strings.Contains(query, "query IssueHistory(") {
+		if a.f.textHistErr != nil {
+			return a.f.textHistErr
+		}
+		id := vars["id"].(string)
+		nodes := a.f.textHist[id]
+		if nodes == nil {
+			nodes = []map[string]any{}
+		}
+		data = map[string]any{"issue": map[string]any{"id": id, "team": map[string]any{"id": team}, "project": nil, "history": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": a.f.textHistMore, "endCursor": "more"}}}}
+		raw, _ := json.Marshal(data)
+		return json.Unmarshal(raw, out)
+	}
 	switch query {
 	case userQuery:
 		u, ok := a.f.users[vars["id"].(string)]

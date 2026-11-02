@@ -41,6 +41,7 @@ func (s *Service) WithIntakeText(ctx context.Context, scope bus.Request, issue *
 		return
 	}
 	changed, _ := data["changed"].(bool)
+	maybe, _ := data["maybe"].(bool)
 	signalAt, _ := data["signal_at"].(string)
-	issue.Intake = &linearprovider.IntakeText{TextChangedSinceSignal: changed, SignalAt: signalAt}
+	issue.Intake = &linearprovider.IntakeText{TextChangedSinceSignal: changed, Maybe: maybe, SignalAt: signalAt}
 }

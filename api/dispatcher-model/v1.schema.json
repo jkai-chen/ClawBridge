@@ -704,6 +704,9 @@
 												"const": "label"
 											}
 										]
+									},
+									"trusted": {
+										"type": "boolean"
 									}
 								}
 							}
@@ -1011,6 +1014,9 @@
 																"const": "label"
 															}
 														]
+													},
+													"trusted": {
+														"type": "boolean"
 													}
 												}
 											}

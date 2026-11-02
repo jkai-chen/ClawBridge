@@ -37,3 +37,14 @@ test("responses are open: an unknown field, top-level or nested, still validates
 	assert.ok(Value.Check(CasesNextResponse, { case: null, ...later }));
 	assert.ok(!Value.Check(ToolRequests.list_sessions, { active_only: true, ...later }), "requests are closed");
 });
+
+test("a domain match validates with or without the trusted flag (older servers omit it)", async () => {
+	const { Value } = await import("typebox/value");
+	const { Case } = await import("../src/schema.ts");
+	const { sampleCase } = await import("./fake-clawbridge.ts");
+	const withMatch = (m: object) => sampleCase({ facts: { ...sampleCase().facts, domain_matches: [m as never] } });
+	assert.ok(Value.Check(Case, withMatch({ domain: "payments", by: "project", trusted: true })));
+	assert.ok(Value.Check(Case, withMatch({ domain: "payments", by: "label", trusted: false })));
+	assert.ok(Value.Check(Case, withMatch({ domain: "payments", by: "label" })));
+	assert.ok(!Value.Check(Case, withMatch({ domain: "payments", by: "label", trusted: "yes" })));
+});

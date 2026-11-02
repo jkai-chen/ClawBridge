@@ -156,7 +156,11 @@ const Facts = Type.Object({
 	),
 	domain_matches: Type.Optional(
 		Type.Array(
-			Type.Object({ domain: Id, by: Type.Union([Type.Literal("project"), Type.Literal("label")]) }),
+			Type.Object({
+				domain: Id,
+				by: Type.Union([Type.Literal("project"), Type.Literal("label")]),
+				trusted: Type.Optional(Type.Boolean()),
+			}),
 		),
 	),
 	holders: Type.Optional(Type.Array(Type.Object({ session_id: Id, since: Time }))),

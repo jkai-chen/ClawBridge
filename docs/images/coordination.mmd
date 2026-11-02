@@ -2,48 +2,57 @@
 %%   npx -y @mermaid-js/mermaid-cli@11.4.2 -b white -c cfg.json -i docs/images/coordination.mmd -o docs/images/coordination.svg
 %% where cfg.json contains: {"htmlLabels":false,"flowchart":{"htmlLabels":false}}
 %% (htmlLabels off makes labels SVG text, not foreignObject, so the image renders through an img tag.)
+%% ClawBridge v1.0.0: how people and agents coordinate
 flowchart TB
-    subgraph M1 ["Machine 1: a teammate's computer"]
-        AG1["Agent sessions: Claude Code, Codex"]
-        MCP1["ClawBridge MCP + wake (hooks, notifier, channel)"]
-        CL1["ClawBridge client (device key)"]
-    end
-    subgraph M2 ["Machine 2: another teammate's computer"]
-        AG2["Agent sessions: Claude Code, Codex"]
-        MCP2["ClawBridge MCP + wake (hooks, notifier, channel)"]
-        CL2["ClawBridge client (device key)"]
-    end
-    TRK["Issue tracker (Linear today)"]
-    OWN["Project owner and leads"]
-    REV["Reviewers (work in the tracker)"]
-    subgraph SRV ["ClawBridge server"]
-        SES["Sessions and presence"]
-        MSG["Messages and hand-overs"]
-        INT["Intake: watcher, webhooks optional"]
-        CLM["Claims (no collisions)"]
-        DISP["Dispatcher: rules engine, optional model engine in a sandbox"]
-        ESC["Escalations: needs a person"]
-        WQ["Tracker write queue"]
-        AUD["Audit trail: messages, claims, decisions"]
-    end
+  subgraph MACHINE["Each person's own machine (one per teammate)"]
+    PERSON(["Person<br/>owner · lead · engineer · reviewer"])
+    CLI["clawbridge CLI / TUI<br/>device key in the OS key store"]
+    AGENTS["Coding agents<br/>Claude Code · Codex<br/>one session each"]
+    MCP["clawbridge mcp<br/>messages · claims · task-board tools"]
+  end
 
-    AG1 --> MCP1
-    MCP1 --> CL1
-    AG2 --> MCP2
-    MCP2 --> CL2
-    CL1 -->|"signed requests"| SES
-    CL1 -->|"2 claim"| CLM
-    CL2 --> CLM
-    CLM -->|"pending claim"| DISP
-    DISP -->|"3 confirm"| CLM
-    DISP -->|"3 or escalate"| ESC
-    ESC -->|"needs a person"| OWN
-    OWN -->|"4 answer"| ESC
-    CLM -->|"claim markers"| WQ
-    WQ -->|"5 status out"| TRK
-    REV -->|"review, comment"| TRK
-    TRK -->|"1 new work"| INT
-    INT -->|"notice to the coordinator"| MSG
-    CL1 <-->|"messages, hand-overs"| MSG
-    CL2 --> MSG
-    MSG -->|"wake"| MCP1
+  subgraph SERVER["ClawBridge server · PostgreSQL"]
+    BUS["Coordination bus<br/>sessions · acked inboxes · threads<br/>claims · audit log"]
+    SYNC["Linear sync<br/>webhooks + poll<br/>writes as the ClawBridge app"]
+    INTAKE["Intake queue<br/>who asked, proven<br/>from Linear history"]
+    DISP["Dispatcher (optional)<br/>domains · trusted sessions<br/>rules + guardrails"]
+    ESC["Escalations<br/>a person decides"]
+  end
+
+  SANDBOX["Model sandbox (optional)<br/>dispatcher agent in a<br/>rootless container"]
+  LLM(["Model provider<br/>owner's own key"])
+  LINEAR[("Linear<br/>issues · labels · comments")]
+
+  PERSON --> CLI
+  AGENTS <-->|MCP| MCP
+  CLI -->|signed requests| BUS
+  MCP <-->|"② claim · messages<br/>live stream wakes idle agents"| BUS
+
+  BUS -->|"③ pending claim"| DISP
+  DISP -->|"④ confirm a trusted session"| BUS
+  DISP -->|anything else| ESC
+  CLI -.->|"person answers"| ESC
+
+  DISP <-->|"cases (model mode)"| SANDBOX
+  SANDBOX -->|egress proxy only| LLM
+  ESC ~~~ SANDBOX
+  LINEAR ~~~ INTAKE
+
+  BUS -->|"⑤ claimed / released"| SYNC
+  SYNC <-->|"① needs-agent · delegate · @mention<br/>⑤ marker comment · agent-working label"| LINEAR
+  SYNC --> INTAKE
+  INTAKE -->|notice to the coordinator| BUS
+
+  classDef person fill:#fff4d6,stroke:#b8860b,color:#222
+  classDef local fill:#e8f1ff,stroke:#3a6fb0,color:#111
+  classDef server fill:#eaf7ea,stroke:#3c8a3c,color:#111
+  classDef guard fill:#fdecea,stroke:#b03a2e,color:#111
+  classDef ext fill:#f3eefc,stroke:#6b4fa3,color:#111
+  class PERSON person
+  class CLI,AGENTS,MCP local
+  class BUS,INTAKE,SYNC server
+  class DISP,ESC guard
+  class SANDBOX,LINEAR,LLM ext
+  style MACHINE fill:#f7faff,stroke:#3a6fb0
+  style SERVER fill:#f6fbf6,stroke:#3c8a3c
+

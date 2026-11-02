@@ -477,6 +477,7 @@ COMPOSE_PROJECT_NAME=clawbridge
 # CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1
 # CLAWBRIDGE_PROJECT_STATUS_DOMAIN_PROVEN=1
 # CLAWBRIDGE_PROJECT_PLAN_PROVEN=1
+# CLAWBRIDGE_MILESTONE_PLAN_PROVEN=1
 # CLAWBRIDGE_WEBHOOKS_PROVEN=1
 # Optional: Linear webhook signing secrets (below); this is only the line's shape.
 # CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS=<team UUID>=<secret>
@@ -620,6 +621,15 @@ CLAWBRIDGE_LINEAR_APP_TOKEN_KEY=<32 random bytes, base64>
   the fields as sent, and what Linear does with a date held at a quarter's
   precision. The preview works without it, and the write goes through the
   confirming person's own Linear profile, never the app.
+- **Milestone plans are off until proven.** Creating and updating a Linear
+  project's milestones (`linear milestone create|update`, see
+  [Linear](../linear.md#milestones)) is refused with `milestone_plan_unproven`
+  until the server runs with `serve --milestone-plan-proven` or
+  `CLAWBRIDGE_MILESTONE_PLAN_PROVEN=1` (the compose file passes it through). Set
+  it only after the live sitting on a throwaway project: a milestone created,
+  renamed, given a date and cleared, each read back as sent. The preview works
+  without it, and the write goes through the confirming person's own Linear
+  profile, never the app.
 - **Linear webhooks are off until proven.** Verified deliveries are recorded
   and change nothing until the server runs with `serve --webhooks-proven` or
   `CLAWBRIDGE_WEBHOOKS_PROVEN=1` (the compose file passes it through). Set it

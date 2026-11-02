@@ -79,6 +79,10 @@ type Store struct {
 	// projectPlanProven is serve --project-plan-proven: the operator ran
 	// the plan probe, so a project's plan fields are set (FR13).
 	projectPlanProven bool
+	// milestonePlanProven is serve --milestone-plan-proven: the operator ran
+	// the milestone sitting, so a project's milestones are created and
+	// updated (FR55).
+	milestonePlanProven bool
 	// issueFamilyMoveProven is serve --issue-family-move-proven: a family
 	// move (a parent with its sub-issues) may be confirmed (FR7 F1).
 	issueFamilyMoveProven bool
@@ -669,6 +673,8 @@ var operationArgs = map[string]string{
 	"project_team_add_list":        "instance",
 	"project_plan_reserve":         "instance operation_id linear_project team_ids fields plan_sha256 confirm agent_marker project_teams project_teams_more",
 	"project_plan_settle":          "instance operation_id outcome changed",
+	"milestone_plan_reserve":       "instance operation_id linear_project team_ids op milestone fields name_sha256 plan_sha256 confirm agent_marker project_teams project_teams_more",
+	"milestone_plan_settle":        "instance operation_id outcome changed milestone",
 	"member_display_name_set":      "display_name if_unset",
 	"taskboard_set":                "instance expected_revision linear_team_ids linear_default_team_id linear_project_id linear_workspace_id",
 	"taskboard_clear":              "instance expected_revision repair",
@@ -1558,6 +1564,9 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 	}
 	if projectPlanOperation(r.Operation) {
 		return s.projectPlanOp(ctx, tx, wid, pid, projectRole, actor, r)
+	}
+	if milestonePlanOperation(r.Operation) {
+		return s.milestonePlanOp(ctx, tx, wid, pid, projectRole, actor, r)
 	}
 	// Any project member may read the approved label list, with or
 	// without a session; setting it is the owner's (labelPolicyOp).

@@ -1,0 +1,49 @@
+{
+ "_meta": {
+  "microsoft/allowedDomains": [
+   "linear.app<https://linear.app/>"
+  ]
+ },
+ "annotations": {
+  "destructiveHint": true,
+  "idempotentHint": false,
+  "openWorldHint": false,
+  "readOnlyHint": false
+ },
+ "description": "Create or update a milestone in a Linear project. If `id` is provided, updates the existing milestone; otherwise creates a new one. When creating, `name` is required.",
+ "inputSchema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "description": {
+    "description": "Milestone description",
+    "type": "string"
+   },
+   "id": {
+    "description": "Milestone name or ID",
+    "type": "string"
+   },
+   "name": {
+    "description": "Milestone name (required when creating)",
+    "type": "string"
+   },
+   "project": {
+    "description": "Project name, ID, identifier (e.g., P-ENG-123), or slug",
+    "type": "string"
+   },
+   "targetDate": {
+    "description": "Target completion date (ISO format, null to remove)",
+    "type": [
+     "string",
+     "null"
+    ]
+   }
+  },
+  "required": [
+   "project"
+  ],
+  "type": "object"
+ },
+ "name": "save_milestone",
+ "title": "Save milestone"
+}

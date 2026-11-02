@@ -12,7 +12,7 @@ import (
 // ExecuteV2 is the closed native adapter used by additive, scope-pinned MCP tools.
 func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation string, args map[string]any) (_ any, err error) {
 	defer func() { s.settle(err) }()
-	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after", "view_id"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "issue_history": {"id", "limit", "cursor"}, "milestones": {"project"}, "labels": {"team_id", "limit", "cursor"}, "views": {"team_id", "kind", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id", "priority", "due_date", "milestone"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "expected_updated_at", "parent_id", "assignee_id", "priority", "due_date", "milestone"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}, "cancel": {"id", "reason", "operation_id"}, "duplicate": {"id", "duplicate_of", "reason", "operation_id"}, "project_status": {"linear_project", "suggest"}, "project_status_set": {"linear_project", "type", "status_id", "operation_id", "confirm", "expected_status_id", "allow_open"}, "issue_move": {"id", "team_id", "operation_id", "confirm", "expected_plan_sha256", "family"}, "project_add_team": {"linear_project", "team_id", "operation_id", "confirm", "expected_plan_sha256"}, "project_plan": {"linear_project", "priority", "target_date", "start_date", "operation_id", "confirm", "expected_plan_sha256"}}
+	allowed := map[string][]string{"doc_list": {"parent_kind", "parent_id", "cursor", "limit"}, "doc_get": {"id", "max_bytes"}, "binding": {}, "context": {}, "issues": {"limit", "cursor", "label_id", "updated_after", "view_id"}, "issue": {"id", "resolve_labels", "comments", "comments_since"}, "issue_history": {"id", "limit", "cursor"}, "milestones": {"project"}, "labels": {"team_id", "limit", "cursor"}, "views": {"team_id", "kind", "limit", "cursor"}, "members": {"team_id", "limit", "cursor"}, "create": {"title", "description", "state_id", "operation_id", "team_id", "project_id", "label_ids", "parent_id", "assignee_id", "priority", "due_date", "milestone"}, "update": {"id", "title", "description", "state_id", "operation_id", "project_id", "label_ids", "expected_label_ids", "add_label_ids", "remove_label_ids", "expected_title", "expected_description_sha256", "expected_updated_at", "parent_id", "assignee_id", "priority", "due_date", "milestone"}, "comment": {"id", "body", "operation_id", "parent_id", "in_response_to"}, "relation_add": {"from_id", "to_id", "type", "operation_id"}, "relation_remove": {"from_id", "to_id", "type", "operation_id"}, "cancel": {"id", "reason", "operation_id"}, "duplicate": {"id", "duplicate_of", "reason", "operation_id"}, "project_status": {"linear_project", "suggest"}, "project_status_set": {"linear_project", "type", "status_id", "operation_id", "confirm", "expected_status_id", "allow_open"}, "issue_move": {"id", "team_id", "operation_id", "confirm", "expected_plan_sha256", "family"}, "project_add_team": {"linear_project", "team_id", "operation_id", "confirm", "expected_plan_sha256"}, "project_plan": {"linear_project", "priority", "target_date", "start_date", "operation_id", "confirm", "expected_plan_sha256"}, "milestone_plan": {"project", "milestone", "name", "target_date", "operation_id", "confirm", "expected_plan_sha256"}}
 	keys, ok := allowed[operation]
 	if !ok {
 		return nil, errors.New("unsupported task-board V2 operation")
@@ -173,6 +173,25 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 			}
 		}
 		return s.SetProjectPlan(ctx, scope, in)
+	case "milestone_plan":
+		confirm, _ := args["confirm"].(bool)
+		in := MilestonePlanInput{ProjectID: text("project"), MilestoneID: text("milestone"), OperationID: text("operation_id"), Confirm: confirm, ExpectedPlanSHA256: text("expected_plan_sha256")}
+		if v, ok := args["name"]; ok {
+			name, isText := v.(string)
+			if !isText {
+				return nil, errors.New("name must be text; nothing was sent")
+			}
+			in.Name = &name
+		}
+		if v, ok := args["target_date"]; ok {
+			in.TargetDate = linearprovider.Field[*string]{Present: true}
+			if d, isText := v.(string); isText {
+				in.TargetDate.Value = &d
+			} else if v != nil {
+				return nil, errors.New("target_date must be YYYY-MM-DD or null; nothing was sent")
+			}
+		}
+		return s.SetMilestonePlan(ctx, scope, in)
 	case "cancel", "duplicate":
 		// An agent cancels or marks Duplicate only so (agent_cancel.go).
 		return s.CancelV2(ctx, scope, CancelInputV2{Operation: operation, OperationID: text("operation_id"), IssueID: text("id"), DuplicateOf: text("duplicate_of"), Reason: text("reason")})

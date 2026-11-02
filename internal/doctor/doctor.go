@@ -266,6 +266,7 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkLinearWrites(ctx, executor, wid, pid, add)
 		checkProjectTeamAdds(ctx, executor, wid, pid, add)
 		checkProjectPlans(ctx, executor, wid, pid, add)
+		checkMilestonePlans(ctx, executor, wid, pid, add)
 		if in.TeamsWithoutProject != nil {
 			checkTeamsWithoutProject(ctx, in.TeamsWithoutProject, wid, pid, add)
 		}
@@ -2169,9 +2170,25 @@ func checkProjectTeamAdds(ctx context.Context, executor Executor, wid, pid strin
 // acknowledged: ClawBridge never undoes them, so a person looks. It reads
 // the overview.
 func checkProjectPlans(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	checkPlanCounts(ctx, executor, wid, pid, add, planCountKind{key: "project_plans", check: Check{ID: "linear.project_plans", Title: "Plans set on Linear projects", Status: Pass}, noun: "project plan(s) set", sent: "plan fields"})
+}
+
+// checkMilestonePlans is checkProjectPlans for milestones created and
+// updated (FR55).
+func checkMilestonePlans(ctx context.Context, executor Executor, wid, pid string, add func(Check)) {
+	checkPlanCounts(ctx, executor, wid, pid, add, planCountKind{key: "milestone_plans", check: Check{ID: "linear.milestone_plans", Title: "Milestones set on Linear projects", Status: Pass}, noun: "milestone plan(s) set", sent: "milestone fields"})
+}
+
+// planCountKind is how one kind of plan write reads in doctor.
+type planCountKind struct {
+	key, noun, sent string
+	check           Check
+}
+
+func checkPlanCounts(ctx context.Context, executor Executor, wid, pid string, add func(Check), kind planCountKind) {
 	r, err := executor.Execute(ctx, bus.Request{Operation: "project_overview", Workspace: wid, Project: pid, Args: map[string]any{}})
 	m, _ := r.Data.(map[string]any)
-	plans, _ := m["project_plans"].(map[string]any)
+	plans, _ := m[kind.key].(map[string]any)
 	if err != nil || plans == nil {
 		// An older server keeps no record of them.
 		return
@@ -2185,9 +2202,9 @@ func checkProjectPlans(ctx context.Context, executor Executor, wid, pid string, 
 		}
 		return 0
 	}
-	check := Check{ID: "linear.project_plans", Title: "Plans set on Linear projects", Status: Pass}
+	check := kind.check
 	planned, changed := count(plans["planned"]), count(plans["with_changes"])
-	check.Message = fmt.Sprintf("%d project plan(s) set; none changed anything else.", planned)
+	check.Message = fmt.Sprintf("%d %s; none changed anything else.", planned, kind.noun)
 	if changed == 0 {
 		add(check)
 		return
@@ -2220,8 +2237,8 @@ func checkProjectPlans(ctx context.Context, executor Executor, wid, pid string, 
 		}
 	}
 	check.Status = Warn
-	check.Message = fmt.Sprintf("%d project plan(s) set; Linear changed other fields with %d: %s.", planned, changed, strings.Join(named, ", "))
-	check.Action = "Look at each project in Linear (ClawBridge sent only the plan fields and never undoes what Linear changed), then acknowledge each with `clawbridge linear writes --ack OPERATION_ID`."
+	check.Message = fmt.Sprintf("%d %s; Linear changed other fields with %d: %s.", planned, kind.noun, changed, strings.Join(named, ", "))
+	check.Action = "Look at each project in Linear (ClawBridge sent only the " + kind.sent + " and never undoes what Linear changed), then acknowledge each with `clawbridge linear writes --ack OPERATION_ID`."
 	add(check)
 }
 

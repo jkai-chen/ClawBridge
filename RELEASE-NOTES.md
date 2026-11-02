@@ -57,6 +57,17 @@
   after an hour, then two, doubling up to a day; the wait ends when the row leaves the queue or a read succeeds. Other
   read errors still log `text_unreadable`. No schema change. Linear config scope: none.
 
+## Linear
+
+- **Create and update a project's milestones.** `clawbridge linear milestone create PROJECT_UUID --name NAME` and
+  `milestone update MILESTONE_UUID --linear-project PROJECT_UUID` (`taskboard_milestone_plan_v2`) set a milestone's
+  name and target date, previewed first and confirmed with `--confirm --expected-plan-sha256`, by the people and
+  sessions that confirm a project's priority and dates. Names are checked (1 to 80, no control, bidi or zero-width
+  characters, no duplicate ignoring case), a date after the project's own is flagged, and the result is read back.
+  These writes are off by default; the operator enables them by setting `CLAWBRIDGE_MILESTONE_PLAN_PROVEN=1` (or
+  `true`) on the server; any other value leaves them off. docs/linear.md "Milestones". No schema change. Linear config
+  scope: project.
+
 # ClawBridge v1.0.1 (released 3 Nov)
 
 **ClawBridge 1.0.1** is a fixes release on 1.0.0. Intake holds an issue's title and description to what the trusted

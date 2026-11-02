@@ -45,7 +45,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           assignment confirm TARGET_SESSION --revision REV [--allow-overlap], assignment release [TARGET_SESSION] --revision REV,
           assignment markers --issue ISSUE_UUID|IDENTIFIER | --assignment ID,
           project coordinator-set SESSION, project coordinator-clear (the coordinator seat confirms assignments;
-            it also lets that session create Linear projects, set project status, priority and dates, add teams within its lane, and move issues between its lane's teams),
+            it also lets that session create Linear projects, set project status, priority and dates, add teams within its lane, move issues between its lane's teams, and create and update a project's milestones (off until the operator enables it)),
           sessions [--issue ID] [--scope-path PATH] [--assignment-state proposed|confirmed],
           host-status|host-wait --adapter codex --endpoint unix:///absolute/socket --thread UUID,
           notify --adapter json|codex --state ABSOLUTE_PATH [--thread UUID] [--interval 5s] [--once],

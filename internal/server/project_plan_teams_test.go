@@ -18,6 +18,12 @@ const planTeamsProject = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
 // client's are dropped from every reserve, and only a session's confirm
 // is given the app's read; a failed read gives none.
 func TestPlanReserveTeamsAreTheServersRead(t *testing.T) {
+	for _, op := range []string{"project_plan_reserve", "milestone_plan_reserve"} {
+		planReserveTeamsAreTheServersRead(t, op)
+	}
+}
+
+func planReserveTeamsAreTheServersRead(t *testing.T, op string) {
 	reads := 0
 	writer := &AppWriter{PlanTeams: func(_ context.Context, lp string) ([]string, bool, error) {
 		reads++
@@ -27,7 +33,7 @@ func TestPlanReserveTeamsAreTheServersRead(t *testing.T) {
 		return []string{"t1"}, false, nil
 	}}
 	req := func(session string, confirm bool) bus.Request {
-		return bus.Request{Operation: "project_plan_reserve", Session: session, Args: map[string]any{"linear_project": planTeamsProject, "confirm": confirm, "team_ids": []string{"client"}, "project_teams": []string{"forged"}, "project_teams_more": false}}
+		return bus.Request{Operation: op, Session: session, Args: map[string]any{"linear_project": planTeamsProject, "confirm": confirm, "team_ids": []string{"client"}, "project_teams": []string{"forged"}, "project_teams_more": false}}
 	}
 	got := planReserveRequest(context.Background(), writer, req("c", true))
 	if !reflect.DeepEqual(got.Args["project_teams"], []string{"t1"}) || got.Args["project_teams_more"] != false || reads != 1 {

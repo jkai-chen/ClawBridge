@@ -79,6 +79,20 @@ func (s *Store) projectPlanOp(ctx context.Context, tx *transaction, wid, pid, pr
 // lead). team_ids is the client's read of the project's teams; every role,
 // pin and lead row is read here, at each call.
 func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, projectRole string, actor map[string]any, b TaskboardBindingV2, teams []string, confirm bool, a map[string]any) (by, lane, team string, err error) {
+	return s.planConfirmer(ctx, tx, pid, projectRole, actor, b, teams, confirm, a, planWords{noun: "project plan", ask: projectPlanAsk, domain: true})
+}
+
+// planWords is how a plan kind's refusals read, and whether the dispatcher's
+// domain coordinator may confirm it (both plan kinds: yes, as #287's status
+// set).
+type planWords struct {
+	noun, ask string
+	domain    bool
+}
+
+// planConfirmer is the one who-may rule of FR13 §2.1 (as its r1 and
+// reviewer conditions (a)-(c) amend it), shared by the plan kinds.
+func (s *Store) planConfirmer(ctx context.Context, tx *transaction, pid, projectRole string, actor map[string]any, b TaskboardBindingV2, teams []string, confirm bool, a map[string]any, w planWords) (by, lane, team string, err error) {
 	// held are the project's teams that are write teams of the binding.
 	held := []string{}
 	for _, t := range teams {
@@ -104,7 +118,7 @@ func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, 
 				return "team_lead", "", t, nil
 			}
 		}
-		return "", "", "", scoped(projectPlanAsk, "forbidden")
+		return "", "", "", scoped(w.ask, "forbidden")
 	}
 	coordinator, err := isProjectCoordinator(ctx, tx, pid, actor)
 	if err != nil {
@@ -124,16 +138,16 @@ func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, 
 	// for a project whose teams are all write teams of its lane (#287's
 	// bound for a project status set).
 	domain := false
-	if !coordinator && len(led) == 0 {
+	if !coordinator && len(led) == 0 && w.domain {
 		if domain, err = isLinearCoordinator(ctx, tx, pid, actor); err != nil {
 			return "", "", "", err
 		}
 	}
 	if !coordinator && len(led) == 0 && !domain {
-		return "", "", "", scoped(projectPlanAsk, "forbidden")
+		return "", "", "", scoped(w.ask, "forbidden")
 	}
 	if len(b.Lanes) == 0 {
-		return "", "", "", scoped("outside_lane: this binding has no lanes, so a session sets no project plan; the project owner, a lead or a team's lead does, in their own terminal", "forbidden")
+		return "", "", "", scoped("outside_lane: this binding has no lanes, so a session sets no "+w.noun+"; the project owner, a lead or a team's lead does, in their own terminal", "forbidden")
 	}
 	name, _, _, _, err := s.sessionLane(ctx, tx, pid, actor)
 	if err != nil {
@@ -141,7 +155,7 @@ func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, 
 	}
 	l, exists := b.Lane(name)
 	if !exists {
-		return "", "", "", scoped("outside_lane: the session has no lane, so it sets no project plan; the project owner pins it with linear lanes pin", "forbidden")
+		return "", "", "", scoped("outside_lane: the session has no lane, so it sets no "+w.noun+"; the project owner pins it with linear lanes pin", "forbidden")
 	}
 	if coordinator {
 		for _, t := range held {
@@ -156,7 +170,7 @@ func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, 
 		}
 	}
 	if domain {
-		return s.domainPlanBound(l, teams, confirm, a)
+		return s.domainPlanBound(l, teams, confirm, a, w.noun)
 	}
 	return "", "", "", scoped(fmt.Sprintf("outside_lane: the project holds no team of lane %s that this session may plan for; the project owner or a lead sets another lane's project", l.Name), "forbidden")
 }
@@ -168,11 +182,11 @@ func (s *Store) projectPlanConfirmer(ctx context.Context, tx *transaction, pid, 
 // operator's proof that the app sees a project's private teams
 // (project_status_domain, as #287's status set). A preview judges the
 // client's read, so it shows who would confirm and records nothing.
-func (s *Store) domainPlanBound(l Lane, clientTeams []string, confirm bool, a map[string]any) (by, lane, team string, err error) {
+func (s *Store) domainPlanBound(l Lane, clientTeams []string, confirm bool, a map[string]any, noun string) (by, lane, team string, err error) {
 	teams := clientTeams
 	if confirm {
 		if !s.projectStatusDomainProven {
-			return "", "", "", scoped("project_status_domain_unproven: a domain coordinator's project plan waits for the operator to prove that the app sees a project's private teams (serve --project-status-domain-proven); the project owner or a lead sets it", "forbidden")
+			return "", "", "", scoped("project_status_domain_unproven: a domain coordinator's "+noun+" waits for the operator to prove that the app sees a project's private teams (serve --project-status-domain-proven); the project owner or a lead sets it", "forbidden")
 		}
 		if teams, err = uuidList(a, "project_teams"); err != nil {
 			return "", "", "", err

@@ -75,7 +75,7 @@ func TestLinearMilestoneListParses(t *testing.T) {
 		t.Fatal("no profile accepted")
 	}
 	// The command word alone, or another action, is the usage.
-	for _, args := range [][]string{{"milestone"}, {"milestone", "create", cliProject}} {
+	for _, args := range [][]string{{"milestone"}, {"milestone", "delete", cliProject}} {
 		if err = runLinear(context.Background(), Config{}, args, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "usage: clawbridge linear milestone list PROJECT_UUID") {
 			t.Fatal(args, err)
 		}

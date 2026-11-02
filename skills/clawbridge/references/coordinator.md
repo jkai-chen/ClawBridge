@@ -112,6 +112,8 @@ After you evaluate a project (or your lane's part of it), preview its priority,
 target date and start date with `taskboard_project_plan_v2`, confirm inside your
 lane, and comment on the project or its tracking issue why. Others preview and
 ask.
+After you evaluate a project, preview its milestones with
+`taskboard_milestone_plan_v2`, confirm inside your lane, and comment why.
 
 ## Claims
 

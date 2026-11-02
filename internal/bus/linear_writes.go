@@ -36,6 +36,7 @@ var linearWriteKinds = map[string][]string{
 	"issue_move_child": {"parent", "from_team", "old_identifier"},
 	"project_team_add": {"changed", "unverified"},
 	"project_plan":     {"fields", "changed"},
+	"milestone_plan":   {"op", "fields", "changed"},
 }
 
 // linearWriteRoles is who may make a recorded write. team_lead is a bound

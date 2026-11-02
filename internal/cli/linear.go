@@ -359,6 +359,21 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 		}
 		profile()
 		min, max = 1, 1
+	case "milestone-create", "milestone-update":
+		f.Usage = func() {
+			fmt.Fprintln(f.Output(), milestoneUsage)
+			f.PrintDefaults()
+		}
+		write()
+		f.StringVar(&v.name, "name", "", "the milestone's name: 1–80 characters, no control, bidirectional or zero-width character")
+		f.StringVar(&v.targetDate, "target-date", "", "the milestone's target date, YYYY-MM-DD")
+		if command == "milestone-update" {
+			f.StringVar(&v.project, "linear-project", "", "required: the Linear project's UUID the milestone belongs to")
+			f.BoolVar(&v.clearTargetDate, "clear-target-date", false, "clear the milestone's target date")
+		}
+		f.BoolVar(&v.confirm, "confirm", false, "send the plan the preview showed (project owner, a lead or a team's lead in your own terminal, or the coordinator session within its lane)")
+		f.StringVar(&v.expectedSHA, "expected-plan-sha256", "", "--confirm: the plan_sha256 the preview showed")
+		min, max = 1, 1
 	case "issue-history":
 		f.Usage = func() {
 			fmt.Fprintln(f.Output(), issueHistoryUsage)
@@ -814,7 +829,21 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	if command == "milestone-list" && !linearprovider.ValidID(pos[0]) {
 		return v, nil, errors.New("linear milestone list requires the project's UUID, never its name")
 	}
-	if min > 0 && command != "issue" && command != "issue-history" && command != "milestone-list" && command != "label" && command != "project" && command != "initiative" && !linearprovider.ValidID(pos[0]) {
+	if command == "milestone-create" || command == "milestone-update" {
+		if v.supplied["target-date"] && v.clearTargetDate {
+			return v, nil, errors.New("set and clear flags conflict: give a date or its clear, not both")
+		}
+		if !linearprovider.ValidID(pos[0]) {
+			if command == "milestone-create" {
+				return v, nil, errors.New("linear milestone create requires the Linear project's UUID, never its name")
+			}
+			return v, nil, errors.New("linear milestone update requires the milestone's UUID from linear milestone list, never its name")
+		}
+		if command == "milestone-update" && !linearprovider.ValidID(v.project) {
+			return v, nil, errors.New("linear milestone update requires --linear-project, the Linear project's UUID, never its name")
+		}
+	}
+	if min > 0 && command != "issue" && command != "issue-history" && command != "milestone-list" && command != "milestone-create" && command != "milestone-update" && command != "label" && command != "project" && command != "initiative" && !linearprovider.ValidID(pos[0]) {
 		if command == "project-update" {
 			return v, nil, errors.New("linear project update requires the Linear project's UUID, never its name")
 		}
@@ -999,6 +1028,9 @@ func writeScopeLines(w io.Writer, view map[string]linearboard.ScopeValueV2) {
 // issueHistoryUsage says history comes first: linear issue history ISSUE.
 const issueHistoryUsage = "usage: clawbridge linear issue history ISSUE [--profile P] [--limit N] [--cursor C]\n  who changed an issue, newest first (history comes before the issue)"
 
+// milestoneUsage is `linear milestone`: list, create and update.
+const milestoneUsage = "usage: clawbridge linear milestone list PROJECT_UUID --profile P [--json]\n   or: clawbridge linear milestone create PROJECT_UUID --name NAME [--target-date YYYY-MM-DD] --operation-id ID [--confirm --expected-plan-sha256 SHA] --profile P\n   or: clawbridge linear milestone update MILESTONE_UUID --linear-project PROJECT_UUID [--name NAME] [--target-date YYYY-MM-DD | --clear-target-date] --operation-id ID [--confirm --expected-plan-sha256 SHA] --profile P\n  create and update are a preview unless --confirm; --profile is required"
+
 // milestoneListUsage is `linear milestone list`: a project's milestones.
 const milestoneListUsage = "usage: clawbridge linear milestone list PROJECT_UUID --profile P [--json]\n  --profile is required, as for the other linear reads\n  a bound project's milestones: name, target date (or -) and progress (a whole percent, or ?)"
 
@@ -1141,6 +1173,8 @@ var linearInternalCommands = map[string]string{
 	"initiative-show":   "initiative show INITIATIVE",
 	"issue-history":     "issue history ISSUE",
 	"milestone-list":    "milestone list PROJECT_UUID",
+	"milestone-create":  "milestone create PROJECT_UUID --name NAME --operation-id ID",
+	"milestone-update":  "milestone update MILESTONE_UUID --linear-project PROJECT_UUID --operation-id ID",
 	"view-list":         "view list",
 	"view-show":         "view show VIEW",
 	"view-create":       "view create",
@@ -1151,7 +1185,7 @@ var linearInternalCommands = map[string]string{
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) (err error) {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|cancel|duplicate|move|watch|webhook-setup\nCancel or mark Duplicate: cancel ISSUE --reason TEXT --operation-id ID; duplicate ISSUE --of ISSUE2 [--reason TEXT] --operation-id ID. An agent only in a Linear project of a kind the project owner or a lead allowed (cancel-kinds set), through a hosted server with the ClawBridge Linear app; never a completed or canceled issue; then release without an outcome.\nYour own connection: connect --name NAME --access read|write [--key-store keyring|file]; it is kept in the OS key store, or with --key-store file (where there is no OS key store; your choice, at your terminal) in a 0600 file: anyone who can read it as you can act as you in Linear. status --profile ID shows which.\nA project's milestones (any member): milestone list PROJECT_UUID --profile P [--json] (--profile is required). An issue's milestone: create ... --milestone MILESTONE_UUID, update ISSUE --milestone MILESTONE_UUID (an ID from that list, in the issue's own project; a name is never sent). Clearing one is not available yet (--clear-milestone is refused, nothing sent).\nWho changed an issue (hosted, read by the server's ClawBridge Linear app; any member): issue history ISSUE [--profile P] [--limit N] [--cursor C], newest first; history comes first, before the issue.\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nA Linear project's priority and dates: project update PROJECT_UUID [--priority P] [--target-date D|--clear-target-date] [--start-date D|--clear-start-date] --operation-id ID [--confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal); lanes set --lane NAME=TEAM[,TEAM...][:DEFAULT] [--unpinned NAME|read_only] --expected-revision N changes only the binding's lanes (project owner or lead, own terminal, never a session).\nThe binding (link --confirm, unlink --confirm, names-refresh, lanes set) is changed in your own terminal, never from an agent session.\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead, own terminal) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session). A lead's status-policy set may change only closes and agent_may_cancel_kinds.\nWho may cancel issues: cancel-kinds show (any member); cancel-kinds set --kinds A[,B]|--none --expected-revision N (project owner or lead, own terminal, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear webhooks (hosted; read-only): webhook-setup [--project SLUG] prints, for each bound write team, the team webhook the owner creates in Linear's UI (its URL, Issues and Comments, this team only) and the env line's shape with <secret>.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|cancel|duplicate|move|watch|webhook-setup\nCancel or mark Duplicate: cancel ISSUE --reason TEXT --operation-id ID; duplicate ISSUE --of ISSUE2 [--reason TEXT] --operation-id ID. An agent only in a Linear project of a kind the project owner or a lead allowed (cancel-kinds set), through a hosted server with the ClawBridge Linear app; never a completed or canceled issue; then release without an outcome.\nYour own connection: connect --name NAME --access read|write [--key-store keyring|file]; it is kept in the OS key store, or with --key-store file (where there is no OS key store; your choice, at your terminal) in a 0600 file: anyone who can read it as you can act as you in Linear. status --profile ID shows which.\nA project's milestones (any member): milestone list PROJECT_UUID --profile P [--json] (--profile is required). Create or update one: milestone create PROJECT_UUID --name NAME [--target-date D] --operation-id ID [--confirm --expected-plan-sha256 SHA], milestone update MILESTONE_UUID --linear-project PROJECT_UUID [--name NAME] [--target-date D|--clear-target-date] --operation-id ID [...]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks. An issue's milestone: create ... --milestone MILESTONE_UUID, update ISSUE --milestone MILESTONE_UUID (an ID from that list, in the issue's own project; a name is never sent). Clearing one is not available yet (--clear-milestone is refused, nothing sent).\nWho changed an issue (hosted, read by the server's ClawBridge Linear app; any member): issue history ISSUE [--profile P] [--limit N] [--cursor C], newest first; history comes first, before the issue.\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nA Linear project's priority and dates: project update PROJECT_UUID [--priority P] [--target-date D|--clear-target-date] [--start-date D|--clear-start-date] --operation-id ID [--confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal); lanes set --lane NAME=TEAM[,TEAM...][:DEFAULT] [--unpinned NAME|read_only] --expected-revision N changes only the binding's lanes (project owner or lead, own terminal, never a session).\nThe binding (link --confirm, unlink --confirm, names-refresh, lanes set) is changed in your own terminal, never from an agent session.\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead, own terminal) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session). A lead's status-policy set may change only closes and agent_may_cancel_kinds.\nWho may cancel issues: cancel-kinds show (any member); cancel-kinds set --kinds A[,B]|--none --expected-revision N (project owner or lead, own terminal, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear webhooks (hosted; read-only): webhook-setup [--project SLUG] prints, for each bound write team, the team webhook the owner creates in Linear's UI (its URL, Issues and Comments, this team only) and the env line's shape with <secret>.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -1220,11 +1254,17 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		// "history" is never an issue: an issue is a UUID or ENG-88.
 		parseAs, history, parseArgs = "issue-history", true, parseArgs[1:]
 	}
+	milestoneAction := ""
 	if command == "milestone" {
-		if len(parseArgs) == 0 || parseArgs[0] != "list" {
-			return errors.New(milestoneListUsage)
+		if len(parseArgs) == 0 || (parseArgs[0] != "list" && parseArgs[0] != "create" && parseArgs[0] != "update") {
+			if len(parseArgs) > 0 && (parseArgs[0] == "--help" || parseArgs[0] == "-h") {
+				_, err := io.WriteString(stdout, milestoneUsage+"\n")
+				return err
+			}
+			return errors.New(milestoneUsage)
 		}
-		parseAs, parseArgs = "milestone-list", parseArgs[1:]
+		milestoneAction = parseArgs[0]
+		parseAs, parseArgs = "milestone-"+milestoneAction, parseArgs[1:]
 	}
 	if command == "initiative" && adminAction == "show" {
 		parseAs = "initiative-show"
@@ -1326,6 +1366,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	if command == "milestone" {
 		view = "linear_milestone_list"
+		if milestoneAction != "list" {
+			view = "linear_milestone_plan"
+		}
 	}
 	emit := func(data any) error {
 		return emit(ctx, stdout, view, bus.Result{Source: "linear", Data: data})
@@ -1535,6 +1578,10 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "issues":
 		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter, UpdatedAfter: v.updatedAfter})
 	case "milestone":
+		if milestoneAction != "list" {
+			data, err = linearMilestonePlan(bounded, service, scope, v, milestoneAction, pos[0])
+			break
+		}
 		data, err = milestoneRead(service, bounded, scope, pos[0])
 	case "issue":
 		if history {

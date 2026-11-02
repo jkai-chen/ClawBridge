@@ -654,6 +654,7 @@ func Run(ctx context.Context, args []string) error {
 	store.SetProjectTeamAddProven(settings.ProjectTeamAddProven)
 	store.SetProjectStatusDomainProven(settings.ProjectStatusDomainProven)
 	store.SetProjectPlanProven(settings.ProjectPlanProven)
+	store.SetMilestonePlanProven(settings.MilestonePlanProven)
 	store.SetIssueFamilyMoveProven(settings.IssueFamilyMoveProven)
 	store.SetWebhooksProven(settings.WebhooksProven)
 	writer, err := appWriter(store)
@@ -1074,6 +1075,11 @@ type ServeSettings struct {
 	// CLAWBRIDGE_PROJECT_PLAN_PROVEN=1, set by the operator after the plan
 	// probe. Previews work without it.
 	ProjectPlanProven bool
+	// MilestonePlanProven lets a project's milestones be created and
+	// updated (FR55): serve --milestone-plan-proven or
+	// CLAWBRIDGE_MILESTONE_PLAN_PROVEN=1, set by the operator after the live
+	// sitting. Previews work without it.
+	MilestonePlanProven bool
 	// IssueFamilyMoveProven lets a family move (a parent with its
 	// sub-issues) be confirmed too: serve --issue-family-move-proven or
 	// CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1, after the family probe. It
@@ -1121,6 +1127,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	familyProven := f.Bool("issue-family-move-proven", false, "let a family move (a parent with its sub-issues) be confirmed; set only after the family probe proves it (also CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN=1)")
 	moveProven := f.Bool("issue-move-proven", false, "let an issue's team move be confirmed; set only after the move probe proves it (also CLAWBRIDGE_ISSUE_MOVE_PROVEN=1)")
 	planProven := f.Bool("project-plan-proven", false, "let the project owner, a lead, a team's lead or the coordinator set a Linear project's priority, target date and start date; set only after the plan probe proves it (also CLAWBRIDGE_PROJECT_PLAN_PROVEN=1)")
+	milestoneProven := f.Bool("milestone-plan-proven", false, "let the project owner, a lead, a team's lead or the coordinator create and update a Linear project's milestones; set only after the milestone probe proves it (also CLAWBRIDGE_MILESTONE_PLAN_PROVEN=1)")
 	webhooksProven := f.Bool("webhooks-proven", false, "let verified Linear webhook deliveries mark watch cursors due; set only after the webhook probe proves them (also CLAWBRIDGE_WEBHOOKS_PROVEN=1)")
 	teamAddProven := f.Bool("project-team-add-proven", false, "let the project owner, a lead or the coordinator add a bound team to a Linear project; set only after the team-add probe proves it (also CLAWBRIDGE_PROJECT_TEAM_ADD_PROVEN=1)")
 	appWebhookProven := f.Bool("app-webhook-proven", false, "reserved for the Linear app webhook; no effect yet (also CLAWBRIDGE_APP_WEBHOOK_PROVEN=1)")
@@ -1145,7 +1152,7 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	if err != nil {
 		return ServeSettings{}, err
 	}
-	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, LeftoverGoogleSettings: leftoverGoogleSettings(getenv), ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven, ProjectTeamAddProven: *teamAddProven, ProjectStatusDomainProven: *statusDomainProven, ProjectPlanProven: *planProven}
+	out := ServeSettings{Listen: *listen, BootstrapOwner: *owner, DatabaseURLEnv: *dsnEnv, Auth: AuthOptions{Methods: methods}, LeftoverGoogleSettings: leftoverGoogleSettings(getenv), ProjectFlowProven: *flowProven, IssueSubscribersProven: *subscribersProven, ProjectTeamAddProven: *teamAddProven, ProjectStatusDomainProven: *statusDomainProven, ProjectPlanProven: *planProven, MilestonePlanProven: *milestoneProven}
 	switch v := getenv("CLAWBRIDGE_PROJECT_FLOW_PROVEN"); v {
 	case "":
 	case "1", "true":
@@ -1194,6 +1201,12 @@ func ParseServe(args []string, getenv func(string) string) (ServeSettings, error
 	case "0", "false":
 	default:
 		return ServeSettings{}, errors.New("CLAWBRIDGE_PROJECT_PLAN_PROVEN is 1 or 0")
+	}
+	// Only 1 or true turns the milestone writes on. Unset, 0, false and any
+	// other value, a typo included, leave them off without refusing the start.
+	switch getenv("CLAWBRIDGE_MILESTONE_PLAN_PROVEN") {
+	case "1", "true":
+		out.MilestonePlanProven = true
 	}
 	out.IssueFamilyMoveProven = *familyProven
 	switch v := getenv("CLAWBRIDGE_ISSUE_FAMILY_MOVE_PROVEN"); v {

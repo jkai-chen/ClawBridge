@@ -165,6 +165,19 @@ type providerV2 struct {
 	parents map[string]string
 	// keys are the teams' keys, as get_team's key; "" when unset.
 	keys map[string]string
+	// milestones are the projects' milestones, as list_milestones; listed
+	// records the projects asked for.
+	milestones map[string][]linearprovider.Milestone
+	listed     []string
+	// dropMilestone makes a project change lose the issue's milestone, as
+	// Linear may.
+	dropMilestone bool
+}
+
+func (p *providerV2) ListMilestones(_ context.Context, project string) ([]linearprovider.Milestone, error) {
+	p.tools++
+	p.listed = append(p.listed, project)
+	return p.milestones[project], nil
 }
 
 func (p *providerV2) named(i linearprovider.IssueV2) linearprovider.IssueV2 {
@@ -270,6 +283,9 @@ func (p *providerV2) CreateV2(_ context.Context, in linearprovider.CreateInputV2
 	p.created = append(p.created, in)
 	p.writes++
 	i := linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, TeamID: in.TeamID, ProjectID: in.ProjectID}, ProjectKnown: true}
+	if in.Milestone.Present {
+		i.MilestoneID, i.MilestoneKnown = in.Milestone.Value, true
+	}
 	if p.after != nil {
 		p.after()
 	}
@@ -285,6 +301,12 @@ func (p *providerV2) UpdateV2(_ context.Context, in linearprovider.UpdateInputV2
 		if in.Project.Value != nil {
 			i.ProjectID = *in.Project.Value
 		}
+		if p.dropMilestone {
+			i.MilestoneID = nil
+		}
+	}
+	if in.Milestone.Present {
+		i.MilestoneID, i.MilestoneKnown = in.Milestone.Value, true
 	}
 	// The receipt reports what was set, as Linear's updated issue does.
 	if in.Labels.Present {

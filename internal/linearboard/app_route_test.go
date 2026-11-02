@@ -269,6 +269,9 @@ func TestWriteArgsRoundTrip(t *testing.T) {
 		{WriteInput: WriteInput{Operation: "update", OperationID: "u-3", IssueID: issueID}, DueDate: linearprovider.Field[*string]{Present: true, Value: text("2026-11-14")}},
 		{WriteInput: WriteInput{Operation: "update", OperationID: "u-4", IssueID: issueID}, DueDate: linearprovider.Field[*string]{Present: true}},
 		{WriteInput: WriteInput{Operation: "create", OperationID: "n-2", Title: text("t")}, TeamID: teamID, DueDate: linearprovider.Field[*string]{Present: true, Value: text("2026-11-14")}},
+		{WriteInput: WriteInput{Operation: "update", OperationID: "u-5", IssueID: issueID}, Milestone: linearprovider.Field[*string]{Present: true, Value: text("f5000000-0000-4000-8000-0000000000aa")}},
+		{WriteInput: WriteInput{Operation: "update", OperationID: "u-6", IssueID: issueID}, Milestone: linearprovider.Field[*string]{Present: true}},
+		{WriteInput: WriteInput{Operation: "create", OperationID: "n-3", Title: text("t")}, TeamID: teamID, Milestone: linearprovider.Field[*string]{Present: true, Value: text("f5000000-0000-4000-8000-0000000000aa")}},
 		{WriteInput: WriteInput{Operation: "update", OperationID: "u-2", IssueID: issueID}, AddLabels: []string{labelA}, RemoveLabels: []string{}},
 	} {
 		got, e := parseWriteArgsV2(in.Operation, writeArgsV2(in))

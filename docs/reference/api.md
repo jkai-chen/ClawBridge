@@ -199,7 +199,8 @@ administration remains in CLI/TUI. See [Linear setup](../linear.md).
 
 The L2 native adapter adds thirteen versioned tools: binding, context, issues,
 issue, create, update, comment, labels, members, relation_add, relation_remove,
-cancel and duplicate, each named `taskboard_<operation>_v2`. It advertises 50 tools in total; a V1-only
+cancel and duplicate, each named `taskboard_<operation>_v2`, plus the read-only
+`taskboard_milestones_v2` (a project's milestones; see [Linear](../linear.md#milestones)). It advertises 51 tools in total; a V1-only
 adapter retains 28 and an unconfigured adapter retains 21. Prefer the advertised
 V2 family for new board calls. Initialization and listing do not access Linear.
 Every write's title, description and comment body is refused before dispatch

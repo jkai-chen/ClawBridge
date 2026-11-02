@@ -212,13 +212,15 @@ func moveTest(t *testing.T) (*Service, *moveAuthority, *moveFake, bus.Request) {
 	}
 	two := 2
 	due := "2026-11-14"
-	p.issues[issueID] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, Identifier: "OLD-1", TeamID: teamID, StateID: moveTodoA}, ProjectKnown: true, LabelNames: []string{"Bug"}, ParentKnown: true, AssigneeKnown: true, Priority: &two, PriorityKnown: true, DueDate: &due, DueDateKnown: true, CycleKnown: true, CycleSet: true, EstimateKnown: true, UpdatedAt: "2026-10-28T12:00:00.000Z"}
+	p.issues[issueID] = linearprovider.IssueV2{Issue: linearprovider.Issue{ID: issueID, Identifier: "OLD-1", TeamID: teamID, StateID: moveTodoA}, ProjectKnown: true, LabelNames: []string{"Bug"}, ParentKnown: true, AssigneeKnown: true, Priority: &two, PriorityKnown: true, DueDate: &due, DueDateKnown: true, MilestoneID: &moveMilestone, MilestoneKnown: true, CycleKnown: true, CycleSet: true, EstimateKnown: true, UpdatedAt: "2026-10-28T12:00:00.000Z"}
 	f := &moveFake{providerV2: p}
 	auth := &moveAuthority{authorityV2: a}
 	s.cfg.Executor = auth
 	s.cfg.Open = func(context.Context, *http.Client, bool) (Provider, error) { return f, nil }
 	return s, auth, f, scope
 }
+
+var moveMilestone = "f5000000-0000-4000-8000-0000000000aa"
 
 func (s *Service) previewMove(t *testing.T, scope bus.Request) MoveResultV2 {
 	t.Helper()
@@ -340,16 +342,19 @@ func TestMoveReadBackUncertain(t *testing.T) {
 		change func(*linearprovider.IssueV2)
 		field  string
 	}{
-		"labels":           {func(i *linearprovider.IssueV2) { i.LabelNames = nil }, "labels"},
-		"state":            {func(i *linearprovider.IssueV2) { i.StateID = moveBacklogB }, "state"},
-		"cycle":            {func(i *linearprovider.IssueV2) { i.CycleSet = true }, "cycle"},
-		"estimate":         {func(i *linearprovider.IssueV2) { three := 3.0; i.Estimate = &three }, "estimate"},
-		"priority":         {func(i *linearprovider.IssueV2) { one := 1; i.Priority = &one }, "priority"},
-		"due date":         {func(i *linearprovider.IssueV2) { d := "2026-12-01"; i.DueDate = &d }, "due_date"},
-		"due date dropped": {func(i *linearprovider.IssueV2) { i.DueDate, i.DueDateKnown = nil, false }, "due_date"},
-		"due date cleared": {func(i *linearprovider.IssueV2) { i.DueDate = nil }, "due_date"},
-		"team":             {func(i *linearprovider.IssueV2) { i.TeamID = teamID }, "team"},
-		"same id":          {func(i *linearprovider.IssueV2) { i.Identifier = "OLD-1" }, "identifier"},
+		"labels":            {func(i *linearprovider.IssueV2) { i.LabelNames = nil }, "labels"},
+		"state":             {func(i *linearprovider.IssueV2) { i.StateID = moveBacklogB }, "state"},
+		"cycle":             {func(i *linearprovider.IssueV2) { i.CycleSet = true }, "cycle"},
+		"estimate":          {func(i *linearprovider.IssueV2) { three := 3.0; i.Estimate = &three }, "estimate"},
+		"priority":          {func(i *linearprovider.IssueV2) { one := 1; i.Priority = &one }, "priority"},
+		"due date":          {func(i *linearprovider.IssueV2) { d := "2026-12-01"; i.DueDate = &d }, "due_date"},
+		"due date dropped":  {func(i *linearprovider.IssueV2) { i.DueDate, i.DueDateKnown = nil, false }, "due_date"},
+		"due date cleared":  {func(i *linearprovider.IssueV2) { i.DueDate = nil }, "due_date"},
+		"milestone dropped": {func(i *linearprovider.IssueV2) { i.MilestoneID = nil }, "milestone"},
+		"milestone changed": {func(i *linearprovider.IssueV2) { m := "f5000000-0000-4000-8000-0000000000ff"; i.MilestoneID = &m }, "milestone"},
+		"milestone unread":  {func(i *linearprovider.IssueV2) { i.MilestoneID, i.MilestoneKnown = nil, false }, "milestone"},
+		"team":              {func(i *linearprovider.IssueV2) { i.TeamID = teamID }, "team"},
+		"same id":           {func(i *linearprovider.IssueV2) { i.Identifier = "OLD-1" }, "identifier"},
 	} {
 		s, a, p, scope := moveTest(t)
 		plan := s.previewMove(t, scope).Plan

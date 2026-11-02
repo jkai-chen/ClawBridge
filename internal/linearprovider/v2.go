@@ -3,6 +3,7 @@ package linearprovider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"slices"
 	"sort"
@@ -64,8 +65,12 @@ type IssueV2 struct {
 	PriorityKnown bool `json:"priority_known"`
 	// DueDate is the issue's due date as YYYY-MM-DD, nil for none; set only
 	// when DueDateKnown: a value of any other shape stays unknown.
-	DueDate        *string    `json:"due_date,omitempty"`
-	DueDateKnown   bool       `json:"due_date_known"`
+	DueDate      *string `json:"due_date,omitempty"`
+	DueDateKnown bool    `json:"due_date_known"`
+	// MilestoneID is the issue's milestone, nil for none; set only when
+	// MilestoneKnown: a value of any other shape stays unknown.
+	MilestoneID    *string    `json:"milestone_id,omitempty"`
+	MilestoneKnown bool       `json:"milestone_known"`
 	Relations      []Relation `json:"relations,omitempty"`
 	RelationsKnown bool       `json:"relations_known"`
 	// DescriptionSHA256 is set only by a single-issue board read; a caller
@@ -145,6 +150,12 @@ type Capabilities struct {
 	RelationAdd              bool `json:"relation_add"`
 	RelationRemove           bool `json:"relation_remove"`
 	LabelEligibilityByFilter bool `json:"label_eligibility_by_filter"`
+	// Milestone: save_issue takes milestone as a string on create and update
+	// and list_milestones can prove which project a milestone is in.
+	// MilestoneRead: list_milestones takes a project string. A milestone is
+	// never cleared yet (MilestoneClearRefused), whatever the schema allows.
+	Milestone     bool `json:"milestone"`
+	MilestoneRead bool `json:"milestone_read"`
 	// LabelMembershipProof: issue label IDs can be proven when reads return
 	// only names (full label listing plus list_issues filtered by label ID).
 	LabelMembershipProof bool `json:"label_membership_proof"`
@@ -180,6 +191,9 @@ type CreateInputV2 struct {
 	Priority *int
 	// DueDate is a YYYY-MM-DD date; Present with a nil Value clears it.
 	DueDate Field[*string]
+	// Milestone is a milestone ID of the issue's project, never a name. A
+	// clear (Present with a nil Value) is always refused.
+	Milestone Field[*string]
 	// parentVerified is set only through WithSameDestinationParent. No wire
 	// argument, schema, flag or environment maps to it, and it is never
 	// serialized.
@@ -192,6 +206,7 @@ type UpdateInputV2 struct {
 	Parent, Assignee Field[*string]
 	Priority         *int
 	DueDate          Field[*string]
+	Milestone        Field[*string]
 	// AddLabels and RemoveLabels are label UUIDs added to or removed from
 	// the current set (native addLabels/removeLabels); never with Labels.
 	AddLabels, RemoveLabels []string
@@ -260,8 +275,17 @@ func nullableArg(f Field[*string], aliases ...string) (arg, bool, error) {
 	}
 	return a(*f.Value, aliases...), true, nil
 }
-func extraArgs(project Field[*string], labels Field[[]string], parent, assignee Field[*string], priority *int, dueDate Field[*string]) ([]arg, error) {
+func extraArgs(project Field[*string], labels Field[[]string], parent, assignee Field[*string], priority *int, dueDate, milestone Field[*string]) ([]arg, error) {
 	out := []arg{}
+	if milestone.Present {
+		if milestone.Value == nil {
+			return nil, errors.New(MilestoneClearRefused)
+		}
+		if !ValidID(*milestone.Value) {
+			return nil, fail("invalid")
+		}
+		out = append(out, arg{[]string{"milestone"}, *milestone.Value, "string"})
+	}
 	if dueDate.Present {
 		if dueDate.Value == nil {
 			out = append(out, arg{[]string{"dueDate"}, nil, "null"})
@@ -565,7 +589,7 @@ func (p *Provider) Capabilities(context.Context) (Capabilities, error) {
 	members := has([]string{"list_users", "list_team_members"}, a(sample, "team", "teamId"), arg{[]string{"limit", "first"}, 1, "integer"})
 	capabilities := Capabilities{Labels: labels, Members: members, CreateProject: has([]string{"create_issue", "save_issue"}, append(create, a(sample, "projectId", "project"))...), UpdateProject: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "projectId", "project"))...), ReplaceLabels: has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"labelIds", "labels"}, []string{}, "array"})...), Parent: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "parentId"))...), Assignee: has([]string{"update_issue", "save_issue"}, append(update, a(sample, "assigneeId", "assignee"))...),
 		Priority: has([]string{"create_issue", "save_issue"}, append(create, arg{[]string{"priority"}, 2, "integer"})...) && has([]string{"update_issue", "save_issue"}, append(update, arg{[]string{"priority"}, 2, "integer"})...),
-		DueDate:  p.dueDateCapable()}
+		DueDate:  p.dueDateCapable(), Milestone: p.milestoneCapable(), MilestoneRead: p.milestoneReadCapable()}
 	// Field shapes, descriptions and schema extensions never prove that a
 	// parent change preserves the destination. This capability only says the
 	// provider can express a parent beside a project and read issues back;
@@ -752,6 +776,7 @@ func (p *Provider) parseIssueV2(ctx context.Context, m map[string]any) (IssueV2,
 	}
 	x.Priority, x.PriorityKnown = parsePriority(m["priority"])
 	x.DueDate, x.DueDateKnown = parseDueDate(m, "dueDate")
+	x.MilestoneID, x.MilestoneKnown = parseMilestoneRef(m)
 	// Only an explicitly complete typed edge list proves absence. Unrecognized
 	// legacy linked-context forms retain RelationsKnown=false.
 	if raw, present := m["issueRelations"]; present {
@@ -1338,7 +1363,7 @@ func createArgsV2(in CreateInputV2) ([]arg, error) {
 	if in.StateID != "" {
 		args = append(args, a(in.StateID, "stateId", "state"))
 	}
-	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority, in.DueDate)
+	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority, in.DueDate, in.Milestone)
 	if e != nil {
 		return nil, e
 	}
@@ -1353,6 +1378,9 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	}
 	if in.DueDate.Present && !p.dueDateCapable() {
 		return IssueV2{}, fail("capability_unavailable")
+	}
+	if in.Milestone.Present && !p.milestoneCapable() {
+		return IssueV2{}, errors.New(MilestoneSetRefused)
 	}
 	m, e := p.mutateV2(ctx, []string{"create_issue", "save_issue"}, args, in.Parent, in.parentVerified)
 	if e != nil {
@@ -1375,7 +1403,7 @@ func (p *Provider) CreateV2(ctx context.Context, in CreateInputV2) (IssueV2, err
 	return x, nil
 }
 func updateArgsV2(in UpdateInputV2) ([]arg, error) {
-	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && in.AddLabels == nil && in.RemoveLabels == nil) {
+	if !ValidID(in.ID) || (in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Labels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && !in.Milestone.Present && in.AddLabels == nil && in.RemoveLabels == nil) {
 		return nil, fail("invalid")
 	}
 	if in.Labels.Present && (in.AddLabels != nil || in.RemoveLabels != nil) {
@@ -1410,7 +1438,7 @@ func updateArgsV2(in UpdateInputV2) ([]arg, error) {
 	if in.StateID != nil && !ValidID(*in.StateID) {
 		return nil, fail("invalid")
 	}
-	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority, in.DueDate)
+	extra, e := extraArgs(in.Project, in.Labels, in.Parent, in.Assignee, in.Priority, in.DueDate, in.Milestone)
 	if e != nil {
 		return nil, e
 	}
@@ -1425,6 +1453,9 @@ func (p *Provider) UpdateV2(ctx context.Context, in UpdateInputV2) (IssueV2, err
 	}
 	if in.DueDate.Present && !p.dueDateCapable() {
 		return IssueV2{}, fail("capability_unavailable")
+	}
+	if in.Milestone.Present && !p.milestoneCapable() {
+		return IssueV2{}, errors.New(MilestoneSetRefused)
 	}
 	if (in.AddLabels != nil || in.RemoveLabels != nil) && p.labelDeltasReason() != "" {
 		return IssueV2{}, fail("capability_unavailable")

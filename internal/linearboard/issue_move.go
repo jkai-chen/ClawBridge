@@ -644,7 +644,16 @@ func moveReadBackV2(plan MovePlanV2, moved, back linearprovider.IssueV2) []strin
 	if was.DueDateKnown && (!back.DueDateKnown || derefDate(back.DueDate) != derefDate(was.DueDate)) {
 		off = append(off, "due_date")
 	}
+	if milestoneOff(was, back) {
+		off = append(off, "milestone")
+	}
 	return off
+}
+
+// milestoneOff: an issue that had a known milestone state no longer shows
+// the same one, or shows it unreadable.
+func milestoneOff(was, back linearprovider.IssueV2) bool {
+	return was.MilestoneKnown && (!back.MilestoneKnown || derefDate(back.MilestoneID) != derefDate(was.MilestoneID))
 }
 
 func derefDate(s *string) string {

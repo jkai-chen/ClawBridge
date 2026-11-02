@@ -303,8 +303,8 @@ func TestV2RecordedFieldsSchemasProjectDueDate(t *testing.T) {
 		enum   int
 		want   int
 	}{
-		"get_issue":   {recordedFields(t, "testdata/get-issue-fields-20261102.json", ""), 45, 15},
-		"list_issues": {recordedFields(t, "../doctor/testdata/linear-native-catalog-20261022.json", "list_issues"), 39, 14},
+		"get_issue":   {recordedFields(t, "testdata/get-issue-fields-20261102.json", ""), 45, 16},
+		"list_issues": {recordedFields(t, "../doctor/testdata/linear-native-catalog-20261022.json", "list_issues"), 39, 15},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, capped := c.fields["maxItems"]; capped || len(c.fields["items"].(map[string]any)["enum"].([]any)) != c.enum {

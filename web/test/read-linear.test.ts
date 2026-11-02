@@ -7,7 +7,7 @@ import { RpcError } from "../src/transport";
 import { parseBinding, parseDispatcher, parseProjects, parseRoles } from "../src/pages";
 import { accountView, LOCAL_ACCOUNT } from "../src/views/account";
 import { dispatcherView, lastTest, modeWords } from "../src/views/dispatcher";
-import { linearView } from "../src/views/linear";
+import { integrationsView } from "../src/views/integrations";
 import { projectsView, THREADS_RATE_LIMITED, THREADS_REFUSED } from "../src/views/projects";
 import { linkOf, peopleOf, roleOn, teamsFinding, teamsView, type TeamsData } from "../src/views/teams";
 import { apiFor, ctxFor, fakeServer, HELLO, settle } from "./helpers";
@@ -192,7 +192,7 @@ describe("Projects", () => {
 });
 
 describe("Linear", () => {
-  const tab = (name: string) => mount(linearView, {}, `#/linear/${name}`);
+  const tab = (name: string) => mount(integrationsView, {}, `#/integrations/linear/${name}`);
   it("has the sub-nav and every write disabled with the reason", async () => {
     const { root } = await tab("connection");
     expect([...root.querySelectorAll("[role=tab]")].map((t) => t.textContent)).toEqual(["Connection", "Binding", "Tasks", "Intake", "Who may cancel", "Project status", "Views", "Queued writes"]);
@@ -226,7 +226,7 @@ describe("Linear", () => {
     page.page.items[0]!.title = HOSTILE;
     const issue = clone(fx("read-linear-issue.json")) as { issue: Record<string, unknown> };
     issue.issue.description = `${HOSTILE}\n<script>alert(2)</script>`;
-    const { root } = await mount(linearView, { "linear.tasks": () => page, "linear.issue": () => issue }, "#/linear/tasks");
+    const { root } = await mount(integrationsView, { "linear.tasks": () => page, "linear.issue": () => issue }, "#/integrations/linear/tasks");
     root.querySelector<HTMLElement>("tbody tr")?.click();
     await settle();
     noInjected(root);
@@ -253,21 +253,21 @@ describe("Linear", () => {
     expect(r.root.textContent).toContain("ATL-212");
   });
   it("says there is no connection, and shows an error with Retry", async () => {
-    let { root } = await mount(linearView, { "linear.connection": () => ({ profiles: [] }) }, "#/linear/tasks");
+    let { root } = await mount(integrationsView, { "linear.connection": () => ({ profiles: [] }) }, "#/integrations/linear/tasks");
     expect(root.textContent).toContain("No Linear connection.");
     expect(root.textContent).toContain("clawbridge linear connect --name NAME --access read");
-    ({ root } = await mount(linearView, { "linear.binding": () => { throw new CallError("Linear is not connected"); } }, "#/linear/binding"));
+    ({ root } = await mount(integrationsView, { "linear.binding": () => { throw new CallError("Linear is not connected"); } }, "#/integrations/linear/binding"));
     expect(root.querySelector("[role=alert]")?.textContent).toContain("Linear is not connected");
     expect([...root.querySelectorAll("button")].some((b) => b.textContent === "Retry")).toBe(true);
   });
   it("shows the queue as unavailable in local mode", async () => {
-    const { root } = await mount(linearView, { "linear.queue": () => fx("read-linear-queue-local.json") }, "#/linear/queue");
+    const { root } = await mount(integrationsView, { "linear.queue": () => fx("read-linear-queue-local.json") }, "#/integrations/linear/queue");
     expect(root.textContent).toContain("The write queue is for hosted workspaces.");
   });
   it("shows the empty states", async () => {
-    let { root } = await mount(linearView, { "linear.tasks": () => ({ page: { items: [], complete: true } }) }, "#/linear/tasks");
+    let { root } = await mount(integrationsView, { "linear.tasks": () => ({ page: { items: [], complete: true } }) }, "#/integrations/linear/tasks");
     expect(root.textContent).toContain("No issues on the board.");
-    ({ root } = await mount(linearView, { "linear.binding": () => ({ binding: { configured: false } }) }, "#/linear/binding"));
+    ({ root } = await mount(integrationsView, { "linear.binding": () => ({ binding: { configured: false } }) }, "#/integrations/linear/binding"));
     expect(root.textContent).toContain("No Linear board is linked to this project.");
   });
 });

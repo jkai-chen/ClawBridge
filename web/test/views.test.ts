@@ -226,7 +226,7 @@ describe("the app shell", () => {
   it("has the sidebar in order, Settings at the bottom, a search placeholder and the connection state", async () => {
     const { host } = await mount();
     const labels = Array.from(host.querySelectorAll(".sidebar nav[aria-label=Main] a")).map((a) => a.textContent);
-    expect(labels).toEqual(["Overview", "Needs you", "Sessions", "Projects", "Teams & People", "Linear", "Dispatcher", "Account", "Doctor"]);
+    expect(labels).toEqual(["Overview", "Needs you", "Sessions", "Projects", "Teams & People", "Project integrations", "Dispatcher", "Account", "Doctor"]);
     expect(host.querySelector(".sidebar .bottom a")?.textContent).toBe("Settings");
     expect(host.querySelector(".search input")?.getAttribute("placeholder")).toBe("Search sessions, issues, messages");
     expect(host.querySelector(".conn")?.textContent).toBe("Connected · client v1.0.0-test");
@@ -259,7 +259,7 @@ describe("the app shell", () => {
 
   it("has a real view for every screen: none is left as a placeholder", async () => {
     const { host } = await mount();
-    for (const id of ["overview", "needs-you", "sessions", "projects", "teams", "linear", "dispatcher", "account", "doctor", "settings"]) {
+    for (const id of ["overview", "needs-you", "sessions", "projects", "teams", "integrations", "dispatcher", "account", "doctor", "settings"]) {
       await visit(`#/${id}`);
       expect(host.querySelector(".placeholder-q"), id).toBeNull();
       expect(host.querySelector("h1"), id).not.toBeNull();

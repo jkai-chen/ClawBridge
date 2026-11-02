@@ -123,7 +123,7 @@ export function needsBody(needs: Needs, state: { filter: NeedKind | "all"; sel: 
   if (notes) root.append(notes);
   if (all.length === 0) {
     if (!needs.kinds.some((k) => !k.ok)) {
-      root.append(h("div", { class: "empty", "data-main": "empty" }, h("b", { text: "Nothing needs you." }), h("span", { text: "Agents and Linear items that need a person show up here." })));
+      root.append(h("div", { class: "empty", "data-main": "empty" }, h("b", { text: "Nothing needs you." }), h("span", { text: "Agents and project items that need a person show up here." })));
     }
     return root;
   }
@@ -205,7 +205,7 @@ export function needsOverviewBlock(needs: Needs | null, failed: string, go: () =
   const down = unavailableNotes(needs.kinds);
   if (all.length === 0) {
     return h("section", { class: "section", "data-block": "needs" }, head(),
-      needs.kinds.some((k) => !k.ok) ? null : h("div", { class: "panel needs-empty" }, h("b", { text: "Nothing needs you" }), h("span", { text: "Agents and Linear items that need a person show up here." })),
+      needs.kinds.some((k) => !k.ok) ? null : h("div", { class: "panel needs-empty" }, h("b", { text: "Nothing needs you" }), h("span", { text: "Agents and project items that need a person show up here." })),
       down);
   }
   const now = new Date();

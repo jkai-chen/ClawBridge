@@ -696,9 +696,13 @@ clawbridge ui --no-open
 ```
 
 `clawbridge ui` opens ClawBridge in your browser, served by the client on
-`127.0.0.1` (a random port, or `--port N`). It is read-only for now: Overview
-(the agent lanes), Sessions (with the Launch block, below) and Doctor are live,
-and every other screen says "Not in this build yet."
+`127.0.0.1` (a random port, or `--port N`). It is read-only for now, and every
+screen reads live data: Overview (the agent lanes), Needs you, Sessions (with
+the Launch block, below), Projects, Teams & People, Project integrations
+(Linear for now: connection, binding, tasks, intake, who may cancel, project
+status, views and queued writes), Dispatcher, Account, Doctor and Settings
+(with the Updates page). Write buttons are shown disabled and say "Not in this
+build yet."
 
 - **It stops by itself** one minute after the last tab closes, on Ctrl-C, and
   after two minutes if no tab ever connects. It is never a daemon and never

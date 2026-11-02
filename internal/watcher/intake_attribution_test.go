@@ -184,7 +184,7 @@ func TestIntakeAttributionLabelOnTakesTheSet(t *testing.T) {
 	const subTeam = "abababab-abab-4bab-8bab-abababababab"
 	const copyNeeds = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
 	e, owner := attributed(t)
-	e.call("taskboard_set_v2", "coord", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{team, subTeam}, "linear_default_team_id": team, "linear_project_ids": []string{}})
+	e.call("taskboard_set_v2", "", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{team, subTeam}, "linear_default_team_id": team, "linear_project_ids": []string{}})
 	needs := func(id, t string) linearprovider.Label {
 		return linearprovider.Label{ID: id, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}
 	}

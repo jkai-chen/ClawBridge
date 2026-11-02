@@ -171,7 +171,9 @@ func TestL1TaskboardExplicitNullTeamBoardAndTombstone(t *testing.T) {
 	args := l1MappingArgs(2)
 	args["linear_project_id"] = l1Project
 	args["linear_workspace_id"] = l1Workspace
-	updated := l1CheckBinding(t, f.call("taskboard_set", "w", "p", "worker", actor("worker", args)), true, 3)
+	// The binding is a person's: a session's set is refused.
+	f.reject("taskboard_set", "w", "p", "worker", actor("worker", args))
+	updated := l1CheckBinding(t, f.call("taskboard_set", "w", "p", "", args), true, 3)
 	if b, ok := updated["binding"].(map[string]any); ok {
 		if b["linear_project_id"] != l1Project || b["linear_workspace_id"] != l1Workspace {
 			t.Error("optional verified IDs lost")
@@ -271,11 +273,13 @@ func TestL1TaskboardPostgresRoleAndPrincipalFences(t *testing.T) {
 	f.call(pgPrincipal("lead"), "taskboard_set", "p", "", l1MappingArgs(0))
 	for _, name := range []string{"alice", "reader"} {
 		l1CheckBinding(t, f.call(pgPrincipal(name), "taskboard_get", "p", name, actor(name, nil)), true, 1)
-		f.reject(pgPrincipal(name), "taskboard_set", "p", name, actor(name, l1MappingArgs(1)))
+		f.rejectAsSession(pgPrincipal(name), "taskboard_set", "p", name, actor(name, l1MappingArgs(1)))
+		// The role fence on its own: as the person, without a session.
+		f.reject(pgPrincipal(name), "taskboard_set", "p", "", l1MappingArgs(1))
 		f.reject(pgPrincipal(name), "taskboard_clear", "p", "", map[string]any{"expected_revision": int64(1)})
 	}
 	f.reject(pgOwner, "taskboard_get", "p", "alice", actor("alice", nil))
 	f.reject("stranger@example.test", "taskboard_get", "p", "", nil)
-	f.reject(pgPrincipal("lead"), "taskboard_set", "p", "alice", actor("alice", l1MappingArgs(1)))
+	f.rejectAsSession(pgPrincipal("lead"), "taskboard_set", "p", "alice", actor("alice", l1MappingArgs(1)))
 	f.call(pgOwner, "taskboard_clear", "p", "owner", actor("owner", map[string]any{"expected_revision": int64(1)}))
 }

@@ -25,6 +25,9 @@ const (
 	maxSuccessorHops = 16
 )
 
+// BindingPersonOnly is the refusal of a binding change sent with a session; a client that knows the session says it before sending.
+const BindingPersonOnly = "forbidden: change the binding in your own terminal (clawbridge linear link …), not from an agent session"
+
 func lanePinOperation(op string) bool {
 	return op == "lane_pins_get" || op == "lane_pin_set" || op == "lane_pin_clear"
 }

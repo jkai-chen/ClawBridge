@@ -161,6 +161,9 @@ label list); agents do not create it.
   person's pin, then the binding's `unpinned` lane (`read_only` by default). `clawbridge linear lanes show` lists
   the pins ("Lanes" in docs/linear.md has the full rules).
   Your user's own CLI writes without a session follow their principal's pin.
+  The binding itself, including its lanes (`linear link`, `linear unlink`, `linear lanes set`, `names-refresh`), is
+  changed only by the project owner or a lead in their own terminal. The authority refuses it from a session, so never
+  try it or work around the refusal: ask the owner or a lead (through the coordinator), naming what should change.
 - A sub-team's issues may carry its own `needs-agent` or its bound parent
   team's: the two have different IDs. The server's intake reads both. A
   manual `issues --label` with the parent's UUID can't reach a sub-team that

@@ -137,7 +137,7 @@ func TestL1NativeWritePostgresReaderAndAccessRevocation(t *testing.T) {
 			}
 			provider := new(l1SyntheticProvider)
 			executor := notificationExecutorFunc(func(ctx context.Context, r bus.Request) (bus.Result, error) {
-				return f.store.ExecuteAs(ctx, pgPrincipal(name), r)
+				return executeAsPerson(ctx, f.store, pgPrincipal(name), r)
 			})
 			service := l1ServiceFor(t, executor, provider)
 			if mode == "member-revoked-predispatch" {

@@ -36,7 +36,7 @@ func newNotificationAuthority(t *testing.T, pg bool) *notificationAuthority {
 		f.setup("p", "other")
 		a.workspace = f.w
 		a.execute = func(r bus.Request) (bus.Result, error) {
-			return f.store.ExecuteAs(context.Background(), pgPrincipal("alice"), r)
+			return executeAsPerson(context.Background(), f.store, pgPrincipal("alice"), r)
 		}
 		a.send = func(p, from, to, id string) any {
 			return f.send(p, from, to, "private notification body must stay in inbox", id)

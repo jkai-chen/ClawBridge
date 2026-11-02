@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 )
 
 const pgOwner = "owner@example.test"
@@ -76,7 +78,7 @@ func jsonData(t *testing.T, value any) any {
 }
 func (f *pgFixture) call(principal, op, p, session string, args map[string]any) any {
 	f.t.Helper()
-	result, err := f.store.ExecuteAs(context.Background(), principal, f.request(op, p, session, args))
+	result, err := executeAsPerson(context.Background(), f.store, principal, f.request(op, p, session, args))
 	if err != nil {
 		f.t.Fatalf("%s principal=%s scope=%s/%s: %v", op, principal, p, session, err)
 	}
@@ -87,9 +89,20 @@ func (f *pgFixture) call(principal, op, p, session string, args map[string]any) 
 }
 func (f *pgFixture) reject(principal, op, p, session string, args map[string]any) error {
 	f.t.Helper()
-	result, err := f.store.ExecuteAs(context.Background(), principal, f.request(op, p, session, args))
+	result, err := executeAsPerson(context.Background(), f.store, principal, f.request(op, p, session, args))
 	if err == nil {
 		f.t.Fatalf("%s principal=%s unexpectedly succeeded: %+v", op, principal, result)
+	}
+	return err
+}
+// rejectAsSession is reject without executeAsPerson's session stripping: the
+// call goes exactly as written, session included, for a fence whose premise
+// is the session (or a role) rather than the person.
+func (f *pgFixture) rejectAsSession(principal, op, p, session string, args map[string]any) error {
+	f.t.Helper()
+	result, err := f.store.ExecuteAs(context.Background(), principal, f.request(op, p, session, args))
+	if err == nil {
+		f.t.Fatalf("%s principal=%s session=%s unexpectedly succeeded: %+v", op, principal, session, result)
 	}
 	return err
 }
@@ -407,4 +420,49 @@ func TestPostgresWorkspaceIsolationAndResume(t *testing.T) {
 		t.Fatal("resume lost immutable retry identity")
 	}
 	first.call(pgPrincipal("alice"), "inbox", "p", "alice", map[string]any{"instance": instance})
+}
+
+// personDevices are the devices enrolled for binding changes, by store,
+// workspace and principal (a freed store's address can be reused, and a
+// device belongs to one workspace).
+var personDevices sync.Map
+
+// executeAsPerson is Store.ExecuteAs, except that a binding change goes as
+// that person on a device of their own, without a session, as the CLI sends
+// it: the authority refuses a binding change from a session or without a
+// device.
+func executeAsPerson(ctx context.Context, store *bus.Store, principal string, r bus.Request) (bus.Result, error) {
+	switch r.Operation {
+	case "taskboard_set", "taskboard_clear", "taskboard_set_v2", "taskboard_clear_v2", "taskboard_names_set", "taskboard_lanes_set":
+	default:
+		return store.ExecuteAs(ctx, principal, r)
+	}
+	r.Session = ""
+	args := map[string]any{}
+	for k, v := range r.Args {
+		if k != "instance" {
+			args[k] = v
+		}
+	}
+	r.Args = args
+	type key struct {
+		store     *bus.Store
+		workspace string
+		principal string
+	}
+	device, ok := personDevices.Load(key{store, r.Workspace, principal})
+	if !ok {
+		pub, _, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			return bus.Result{}, err
+		}
+		google := bus.Identity{Principal: principal, Issuer: bus.GoogleIssuer, Subject: pgSubject(principal)}
+		enroll := bus.Request{Operation: "device_enroll", Workspace: r.Workspace, Args: map[string]any{"public_key": devicekey.EncodePublicKey(pub), "label": "binding", "key_store": "keyring"}}
+		if _, err = store.ExecuteAsIdentity(ctx, google, enroll); err != nil {
+			return bus.Result{}, err
+		}
+		device = devicekey.ID(pub)
+		personDevices.Store(key{store, r.Workspace, principal}, device)
+	}
+	return store.ExecuteAsIdentity(ctx, bus.Identity{Principal: principal, Issuer: bus.DeviceIssuer, Subject: device.(string)}, r)
 }

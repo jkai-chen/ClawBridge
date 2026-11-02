@@ -835,7 +835,7 @@ func TestIntakeS1ReadsTheSubTeamsLabelSet(t *testing.T) {
 	const subA = "a9a9a9a9-a9a9-4a9a-8a9a-a9a9a9a9a9a9"
 	const subB = "b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0"
 	e := setup(t)
-	e.call("taskboard_set_v2", "coord", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{team, subTeam}, "linear_default_team_id": team, "linear_project_ids": []string{}})
+	e.call("taskboard_set_v2", "", map[string]any{"expected_revision": 1, "mode": "team_board", "linear_team_ids": []string{team, subTeam}, "linear_default_team_id": team, "linear_project_ids": []string{}})
 	e.call("intake_trust_add", "coord", map[string]any{"linear_user_id": trustedUser})
 	needs := func(id, t string) linearprovider.Label {
 		return linearprovider.Label{ID: id, Name: needsAgentLabel, TeamID: t, EligibilityKnown: true}

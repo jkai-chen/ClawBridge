@@ -117,3 +117,38 @@ func (s *Service) SetLanePin(ctx context.Context, scope bus.Request, in LanePinI
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }
+
+// LanesSetInput replaces a binding's lanes and/or its unpinned setting at the
+// binding revision the caller last read. HaveLanes says Lanes was given (even
+// when empty); a field left out keeps its stored value.
+type LanesSetInput struct {
+	Lanes     []bus.Lane
+	HaveLanes bool
+	Unpinned  string
+	Expected  int64
+}
+
+// SetLanes changes only the lanes and the unpinned setting of the binding:
+// the project owner or a lead, in their own terminal, without a session.
+// Nothing is sent to Linear and no other field of the binding changes.
+func (s *Service) SetLanes(ctx context.Context, scope bus.Request, in LanesSetInput) (any, error) {
+	if scope.Session != "" {
+		return nil, errors.New(bus.BindingPersonOnly)
+	}
+	if in.Expected < 0 {
+		return nil, errors.New("lanes set requires --expected-revision, the binding's revision from linear binding")
+	}
+	if !in.HaveLanes && in.Unpinned == "" {
+		return nil, errors.New("lanes set takes --lane, --unpinned or both")
+	}
+	args := map[string]any{"expected_revision": in.Expected}
+	if in.HaveLanes {
+		args["lanes"] = bus.LanesArg(in.Lanes)
+	}
+	if in.Unpinned != "" {
+		args["unpinned"] = in.Unpinned
+	}
+	scope.Operation, scope.Args = "taskboard_lanes_set", args
+	r, e := s.cfg.Executor.Execute(ctx, scope)
+	return r.Data, e
+}

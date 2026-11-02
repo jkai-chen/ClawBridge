@@ -140,7 +140,7 @@ func TestPostgresOnlyTheProjectOwnerRepairsAnUnreadableBinding(t *testing.T) {
 	defer s.Close()
 	w := newID("repairws")
 	as := func(principal, op string, a map[string]any) (Result, error) {
-		return s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: "p", Args: a})
+		return executeAs(ctx, s, principal, Request{Operation: op, Workspace: w, Project: "p", Args: a})
 	}
 	for _, step := range []struct {
 		op string

@@ -43,6 +43,14 @@ file they chose for a machine without one ([where your connection is
 kept](#where-your-connection-is-kept)). No Orca, Node or another teammate's host is
 required.
 
+**The binding is changed in your own terminal.** `linear link --confirm`, `linear unlink --confirm`,
+`linear names-refresh` and `linear lanes set` are made by the project owner or a lead, without `--session`, and on a
+hosted server from a person's own signed-in device (not a CI key). ClawBridge refuses them from a session (the CLI
+itself checks only `--session`, up front; the server refuses a session named any other way, such as
+`CLAWBRIDGE_SESSION`), with "change the binding in your own terminal (clawbridge linear link …), not from
+an agent session". An agent that finds the binding wrong asks the project owner or a lead; a link without
+`--confirm` still only previews. The TUI sends them without its session.
+
 `linear link` records the Linear workspace the binding belongs to, read from
 Linear (`get_workspace`) and shown in the preview as `linear_workspace_id`. A
 binding linked in one workspace is never relinked in another or without its
@@ -479,12 +487,26 @@ clawbridge linear link --profile PROFILE_ID \
   --linear-project PROJECT_UUID --expected-revision CURRENT_REVISION
 ```
 
-- `--lane NAME=TEAM[,TEAM...]`: a lane and the write teams it writes; the first team is its default. Up to 10 lanes,
-  named with lowercase letters, digits and dashes. Lanes may share a team, such as the parent.
-- `--unpinned`: the lane of a session nobody pinned, or `read_only`, the default.
+- `--lane NAME=TEAM[,TEAM...][:DEFAULT]`: a lane and the write teams it writes; the first team is its default unless
+  `:DEFAULT` names another of them. Up to 10 lanes, named with lowercase letters, digits and dashes. Lanes may share a
+  team, such as the parent.
+- `--unpinned`: the lane of a session nobody pinned, or `read_only`, the default: a session nobody pinned
+  writes nothing until you name a lane for it.
+
+To change only the lanes or the unpinned setting, without relinking, use `lanes set`. It replaces the binding's lanes
+and/or its unpinned setting at the binding revision you read (`linear binding`), and touches nothing else in it; a
+stale revision is refused, so read the binding again. `--lane` takes the same form as in `link`; the lanes you name
+replace the stored ones, and leaving `--lane` out keeps them (`--unpinned` alone is checked against the stored lanes).
+To remove every lane, relink without `--lane`. Prefer `lanes set` to relinking for lane changes; `link` still sets
+lanes when it creates or replaces a binding. History records the change by counts only.
+
+```sh
+clawbridge linear lanes set --lane ai=AI_UUID,PARENT_UUID --lane platform=PLATFORM_UUID,PARENT_UUID \
+  --unpinned read_only --expected-revision N
+```
 
 **Which lane a session is in** is set on the project, never by the session. The project owner pins, in their own
-terminal, without `--session`:
+terminal, without `--session` (the lanes themselves are set the same way, with `lanes set`):
 
 ```sh
 clawbridge linear lanes show

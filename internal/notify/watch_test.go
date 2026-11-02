@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -399,5 +400,60 @@ func TestNotificationCorruptCheckpointRequiredFieldsNeverReplay(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestOpenCheckpointNamesASignInRouteChangeOnly(t *testing.T) {
+	const routeFmt = "notification state %q was saved under a different sign-in route (for example before the old Google settings were removed from config.toml or the environment); delete it (it holds only the notifier's checkpoint) or start the notifier with a new --state file"
+	const genericMsg = "corrupt or mismatched notification state; inspect it rather than retargeting"
+	good := config(t).Binding
+	cases := []struct {
+		name  string
+		write func(*checkpoint)
+		want  string
+	}{
+		{"match", func(*checkpoint) {}, ""},
+		{"authority only", func(s *checkpoint) { s.Binding.Authority = "cloud:other" }, routeFmt},
+		{"principal", func(s *checkpoint) { s.Binding.Principal = "local:other" }, genericMsg},
+		{"instance", func(s *checkpoint) { s.Binding.Instance = "OTHER" }, genericMsg},
+		{"authority and instance", func(s *checkpoint) { s.Binding.Authority = "cloud:other"; s.Binding.Instance = "OTHER" }, genericMsg},
+		{"authority and invalid scope", func(s *checkpoint) { s.Binding.Authority = "cloud:other"; s.Scope = Scope{} }, genericMsg},
+		{"authority and bad after", func(s *checkpoint) { s.Binding.Authority = "cloud:other"; s.After = -1 }, genericMsg},
+		{"authority and bad version", func(s *checkpoint) { s.Binding.Authority = "cloud:other"; s.Version = 2 }, genericMsg},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "notify.json")
+			s := checkpoint{Version: 1, Binding: good, Scope: Scope{WorkspaceID: "ws-id", ProjectID: "prj-id", SessionID: "ses-id"}, After: 3}
+			tc.write(&s)
+			data, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			f, got, err := openCheckpoint(path, good)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.close()
+				if got.After != 3 {
+					t.Fatal("matching state not loaded", got.After)
+				}
+				return
+			}
+			want := tc.want
+			if want == routeFmt {
+				want = fmt.Sprintf(routeFmt, path)
+			}
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+			if _, statErr := os.Stat(path + ".lock"); !os.IsNotExist(statErr) {
+				t.Fatal("lock leaked", statErr)
+			}
+		})
 	}
 }

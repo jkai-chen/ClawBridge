@@ -125,6 +125,10 @@ keeps refusing Google until you change that setting and put the Google settings 
   `clawbridge invite --email EMAIL --recovery`, and the member joins with it ([sign-in](../sign-in.md#members-and-ownership)).
 - **The main owner with no device:** the host operator issues a
   [bootstrap invite](../sign-in.md#the-operators-bootstrap-invite).
+- **A client that removes its old Google settings** (from `config.toml` or the environment): after removing the
+  settings, start each `clawbridge notify` again with a new `--state` file, or delete the old one, which holds only the
+  checkpoint (an old state is refused); the saved state is tied to the sign-in route
+  ([notifications](../notifications.md#foreground-json-watcher)).
 - **An old client or profile still on Google** gets the refusal above. `device enroll` needs a Google sign-in, which
   a device-only server no longer accepts, so the member asks an owner for an invite (or a recovery invite) and runs
   `clawbridge join`.

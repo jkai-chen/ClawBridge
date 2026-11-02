@@ -85,6 +85,13 @@
   forever. If the channel pushed meanwhile, the batch is left to it; if the push isn't confirmed within 120 s, the
   notifier types it. The other unconfirmed reasons (no command line, a custom endpoint, Windows) still type at once.
   No schema change. Linear config scope: none.
+- **The command notifier types only while the session's agent is running.** It checks the session's queue record
+  (at most 2 minutes old), that the agent and its MCP server are alive, and that the MCP server is still the agent's
+  child; otherwise it holds the notice, writes `hint_held` once per batch and types it when the agent is back. New
+  `notify --adapter command --only-if PROGRAM [--only-if-arg ARG]...` runs your own check (absolute path, no shell,
+  5 s) before each type. Relaunch recipes now stop the notifier by its PID, press Ctrl-U, relaunch and restart the
+  notifier with the new terminal handle (the gate does not check it). The gate needs the context directory. No schema
+  change. Linear config scope: none.
 
 ## Fixes
 

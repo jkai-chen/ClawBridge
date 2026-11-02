@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"clawbridge/internal/bus"
@@ -32,10 +33,18 @@ var newNotifyExecutor = func(c Config) (notify.Executor, func(), error) {
 }
 var runNotifyWatcher = notify.Run
 
+// repeatFlag is a string flag that may be given more than once.
+type repeatFlag []string
+
+func (r *repeatFlag) String() string     { return strings.Join(*r, " ") }
+func (r *repeatFlag) Set(v string) error { *r = append(*r, v); return nil }
+
 func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
 	var adapter, thread, state, command string
 	var interval time.Duration
 	var once bool
+	var onlyIf string
+	var onlyIfArgs repeatFlag
 	// The command adapter's argv follows "--", never through a shell.
 	var argv []string
 	if i := slices.Index(args, "--"); i >= 0 {
@@ -47,6 +56,8 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 		f.StringVar(&state, "state", "", "absolute private checkpoint path")
 		f.StringVar(&command, "codex-command", "", "absolute Codex executable override")
 		f.DurationVar(&interval, "interval", 5*time.Second, "authority poll interval (1s–300s)")
+		f.StringVar(&onlyIf, "only-if", "", "command adapter only: absolute path of a program run (no shell, 5s) before each type; exit 0 types, anything else holds the notice")
+		f.Var(&onlyIfArgs, "only-if-arg", "one argument for the --only-if program (repeatable, in order)")
 		f.BoolVar(&once, "once", false, "at most one status poll and hint attempt")
 	})
 	if errors.Is(err, flag.ErrHelp) {
@@ -60,6 +71,15 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	if (adapter == "command") != (len(argv) > 0) {
 		return errors.New("--adapter command, and only it, takes a command after --: notify --adapter command --state PATH -- PROGRAM [ARG|{text}]...")
+	}
+	if (onlyIf != "" || len(onlyIfArgs) > 0) && adapter != "command" {
+		return errors.New("--only-if and --only-if-arg belong to --adapter command only")
+	}
+	if len(onlyIfArgs) > 0 && onlyIf == "" {
+		return errors.New("--only-if-arg needs --only-if PROGRAM")
+	}
+	if onlyIf != "" && !filepath.IsAbs(onlyIf) {
+		return errors.New("--only-if needs an absolute program path")
 	}
 	if !filepath.IsAbs(state) || interval < time.Second || interval > 300*time.Second {
 		return errors.New("notify requires absolute --state and interval 1s–300s")
@@ -121,5 +141,12 @@ func runNotify(ctx context.Context, flags Config, args []string, stdout, stderr 
 		return err
 	}
 	defer closeExecutor()
-	return runNotifyWatcher(ctx, notify.Config{Binding: notify.Binding{Authority: hex.EncodeToString(digest[:]), Principal: principal, Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Adapter: adapter, Thread: thread, Command: argv}, Executor: executor, StatePath: state, Interval: interval, Once: once, Output: stdout, Diagnostics: stderr, CodexCommand: command, ContextDir: contextDirOrEmpty()})
+	return runNotifyWatcher(ctx, notify.Config{Binding: notify.Binding{Authority: hex.EncodeToString(digest[:]), Principal: principal, Workspace: c.Workspace, Project: c.Project, Session: c.Session, Instance: c.Instance, Adapter: adapter, Thread: thread, Command: argv}, Executor: executor, StatePath: state, Interval: interval, Once: once, Output: stdout, Diagnostics: stderr, CodexCommand: command, ContextDir: contextDirOrEmpty(), OnlyIf: onlyIfArgv(onlyIf, onlyIfArgs)})
+}
+
+func onlyIfArgv(program string, args []string) []string {
+	if program == "" {
+		return nil
+	}
+	return append([]string{program}, args...)
 }

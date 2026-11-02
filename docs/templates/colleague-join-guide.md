@@ -200,7 +200,9 @@ The coordinator is told when your session registers, so it can answer your hello
   ```
 
   It only ever sends `N ClawBridge messages are waiting; call inbox`, never a sender or
-  body ([notifications](../notifications.md)).
+  body, and only while your agent is running; if you relaunch your agent in that pane,
+  stop the notifier by its PID, press Ctrl-U to clear the line, relaunch, then start
+  the notifier again ([notifications](../notifications.md)).
 
 ## If something goes wrong
 

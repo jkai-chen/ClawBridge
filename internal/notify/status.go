@@ -153,6 +153,16 @@ type Config struct {
 	ContextDir string
 	// CommandRunner runs the command adapter; nil runs the process.
 	CommandRunner CommandRunner
+	// OnlyIf is the command adapter's optional precondition (--only-if):
+	// an absolute program and its arguments, run before each type; exit 0
+	// delivers, anything else holds the batch.
+	OnlyIf        []string
+	OnlyIfTimeout time.Duration
+	OnlyIfRunner  CommandRunner
+	// Live is how the command adapter's agent-running gate reads the clock
+	// and processes; the zero value uses the real ones.
+	Live LiveProbe
+	gate *gateState
 }
 
 func (c Config) validate() error {

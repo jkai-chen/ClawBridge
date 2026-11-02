@@ -2,7 +2,9 @@ package linearprovider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"testing"
 
@@ -161,5 +163,157 @@ func TestV2DueDateNeedsTheSchema(t *testing.T) {
 	p, _ := NewWithCaller(context.Background(), &fake{tools: []*mcp.Tool{create, updateStr}})
 	if caps, _ := p.Capabilities(context.Background()); caps.DueDate {
 		t.Fatal("update without null accepted")
+	}
+}
+
+// recordedFields reads a recorded fields schema exactly as Linear advertised it.
+func recordedFields(t *testing.T, path string, tool string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if tool == "" {
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields
+	}
+	var catalog []struct {
+		Name        string `json:"name"`
+		InputSchema struct {
+			Properties map[string]map[string]any `json:"properties"`
+		} `json:"inputSchema"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range catalog {
+		if c.Name == tool {
+			return c.InputSchema.Properties["fields"]
+		}
+	}
+	t.Fatal("tool not in catalog", tool)
+	return nil
+}
+
+func recordedGetIssueEnum(t *testing.T) []string {
+	var out []string
+	for _, v := range recordedFields(t, "testdata/get-issue-fields-20261102.json", "")["items"].(map[string]any)["enum"].([]any) {
+		out = append(out, v.(string))
+	}
+	return out
+}
+
+func without(names []string, drop string) []string {
+	var out []string
+	for _, n := range names {
+		if n != drop {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func contains(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+// dueProjectionFake answers like Linear: only the requested fields come back.
+type dueProjectionFake struct {
+	fake
+	due any
+}
+
+func (f *dueProjectionFake) CallTool(_ context.Context, p *mcp.CallToolParams) (*mcp.CallToolResult, error) {
+	args := p.Arguments.(map[string]any)
+	f.calls = append(f.calls, p.Name)
+	f.args = append(f.args, args)
+	original := nativeGetIssue([]any{}, emptyNativeRelations())
+	original["dueDate"] = f.due
+	row := map[string]any{}
+	for _, name := range args["fields"].([]string) {
+		row[name] = original[name]
+	}
+	return &mcp.CallToolResult{StructuredContent: row}, nil
+}
+
+// An issue read shows the due date only if it asks for it: Linear returns just
+// the requested fields.
+func TestV2DueDateIsInTheReadProjection(t *testing.T) {
+	for name, c := range map[string]struct {
+		enum  []string
+		asked bool
+		due   any
+		date  *string
+		known bool
+	}{
+		"date":         {recordedGetIssueEnum(t), true, "2026-11-14", ptr("2026-11-14"), true},
+		"null":         {recordedGetIssueEnum(t), true, nil, nil, true},
+		"not in enum":  {without(recordedGetIssueEnum(t), "dueDate"), false, "2026-11-14", nil, false},
+		"minimal enum": {[]string{"id", "uuid", "teamId", "projectId"}, false, "2026-11-14", nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &dueProjectionFake{fake: fake{tools: []*mcp.Tool{projectedIssueTool("get_issue", issueFieldsSchema(c.enum...))}}, due: c.due}
+			p, err := NewWithCaller(context.Background(), f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, err := p.IssueV2(context.Background(), iid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent, _ := f.args[0]["fields"].([]string)
+			if contains(sent, "dueDate") != c.asked {
+				t.Fatal("projection", sent)
+			}
+			if x.DueDateKnown != c.known || !reflect.DeepEqual(x.DueDate, c.date) {
+				t.Fatal(x.DueDate, x.DueDateKnown)
+			}
+		})
+	}
+	// The order is the allowlist's, dueDate right after priority.
+	got, err := issueReadProjection(map[string]any{"fields": issueFieldsSchema("dueDate", "priority", "uuid", "id", "teamId", "projectId", "url")})
+	if err != nil || !reflect.DeepEqual(got, []string{"id", "uuid", "teamId", "projectId", "priority", "dueDate", "url"}) {
+		t.Fatal(got, err)
+	}
+	// maxItems still counts the extra field.
+	tight := issueFieldsSchema("id", "uuid", "teamId", "projectId", "dueDate")
+	tight["maxItems"] = float64(4)
+	if _, err := issueReadProjection(map[string]any{"fields": tight}); err == nil {
+		t.Fatal("maxItems ignored")
+	}
+	tight["maxItems"] = float64(5)
+	if got, err := issueReadProjection(map[string]any{"fields": tight}); err != nil || len(got) != 5 {
+		t.Fatal(got, err)
+	}
+}
+
+// The recorded live schemas (no maxItems) are accepted whole, with dueDate in
+// the projection and under the 23 fields R1 budgets once projectMilestone joins.
+func TestV2RecordedFieldsSchemasProjectDueDate(t *testing.T) {
+	for name, c := range map[string]struct {
+		fields map[string]any
+		enum   int
+		want   int
+	}{
+		"get_issue":   {recordedFields(t, "testdata/get-issue-fields-20261102.json", ""), 45, 15},
+		"list_issues": {recordedFields(t, "../doctor/testdata/linear-native-catalog-20261022.json", "list_issues"), 39, 14},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, capped := c.fields["maxItems"]; capped || len(c.fields["items"].(map[string]any)["enum"].([]any)) != c.enum {
+				t.Fatal("recorded schema changed", c.fields)
+			}
+			got, err := issueReadProjection(map[string]any{"fields": c.fields})
+			if err != nil || !contains(got, "dueDate") || len(got) != c.want || len(got) > 23 {
+				t.Fatal(len(got), got, err)
+			}
+		})
 	}
 }

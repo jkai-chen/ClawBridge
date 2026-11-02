@@ -41,6 +41,8 @@
   can't rule out still says the text may have changed, and the issue read now shows `maybe: true` for it;
   `intake list` keeps it apart from a confirmed change. `intake rearm --help` now lists `--confirm` and explains
   the vouch. No schema change. Linear config scope: none.
+- **An issue read shows its due date.** `clawbridge linear issue` and the MCP issue read never asked Linear for it, so
+  they showed none even when one was set. No schema change. Linear config scope: none.
 
 ## Install and upgrade
 

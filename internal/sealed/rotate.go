@@ -26,6 +26,11 @@ func (s *Store) Rotate() error {
 	if err != nil {
 		return err
 	}
+	if h, herr := s.header(); herr != nil {
+		return herr
+	} else if h.Mode == modePassphrase {
+		return fail(CodePassphraseMode, filepath.Join(s.dir, dataKeyName), "the data key is wrapped with a passphrase; rotate it with RotateWrapped so the new key is wrapped too")
+	}
 	kid, key := randomKid(), make([]byte, keyLen)
 	if _, err = rand.Read(key); err != nil {
 		return ioFail(s.dir, "cannot get random bytes", err)
@@ -49,11 +54,15 @@ func (s *Store) recoverRotation() error {
 		return nil
 	}
 	curKid, _, err := s.currentKey()
+	if errors.Is(err, ErrPassphraseMode) {
+		// Only RotateWrapped, which has the passphrase, can finish this.
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	kid, key, err := s.readKeyFile(next)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrPassphraseMode) {
 		return nil
 	}
 	if CodeOf(err) == CodeRecordCorrupt {

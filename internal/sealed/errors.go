@@ -16,6 +16,10 @@ const (
 	CodeNotFound       Code = "not_found"
 	CodeIO             Code = "io_error"
 	CodeInvalid        Code = "invalid_argument"
+	// CodeWrongPassphrase is a passphrase that does not open the data key,
+	// or a key file changed since it was wrapped; the two are not told apart.
+	CodeWrongPassphrase Code = "wrong_passphrase"
+	CodeWeakPassphrase  Code = "weak_passphrase"
 )
 
 // Error is a sealed-store failure. errors.Is matches it against the Err*
@@ -47,6 +51,9 @@ var (
 	ErrWindowsDrive   = &Error{Code: CodeWindowsDrive}
 	ErrPassphraseMode = &Error{Code: CodePassphraseMode}
 	ErrNotFound       = &Error{Code: CodeNotFound}
+
+	ErrWrongPassphrase = &Error{Code: CodeWrongPassphrase}
+	ErrWeakPassphrase  = &Error{Code: CodeWeakPassphrase}
 )
 
 // CodeOf is err's code, or "" when err is not a sealed-store error.

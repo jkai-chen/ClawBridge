@@ -20,6 +20,7 @@ import (
 	"github.com/zalando/go-keyring"
 	"golang.org/x/oauth2"
 
+	"clawbridge/internal/fsprivate"
 	"clawbridge/internal/linearpace"
 )
 
@@ -171,38 +172,22 @@ func (m *Manager) save(x index) error {
 // writePrivate replaces d/name with b through a private temporary file,
 // synced and renamed into place. A failure names what, never b.
 func writePrivate(d, name, what string, b []byte) error {
-	p := filepath.Join(d, name)
-	f, e := os.CreateTemp(d, "."+strings.TrimSuffix(name, ".json")+"-*")
-	if e != nil {
-		return problem(what + " unavailable")
+	err := fsprivate.WriteAtomic(d, "."+strings.TrimSuffix(name, ".json")+"-", name, b)
+	if err == nil {
+		return nil
 	}
-	defer os.Remove(f.Name())
-	if e = makePrivate(f.Name()); e != nil {
-		f.Close()
-		return problem("cannot protect " + what)
+	var we *fsprivate.WriteError
+	if errors.As(err, &we) {
+		switch we.Stage {
+		case fsprivate.StageProtect:
+			return problem("cannot protect " + what)
+		case fsprivate.StageVerify:
+			return problem("unsafe staged " + what)
+		case fsprivate.StageSync:
+			return problem(what + " durability uncertain")
+		}
 	}
-	if e = privatePath(f.Name(), false); e != nil {
-		f.Close()
-		return problem("unsafe staged " + what)
-	}
-	if _, e = f.Write(b); e != nil {
-		f.Close()
-		return problem(what + " unavailable")
-	}
-	if e = f.Sync(); e != nil {
-		f.Close()
-		return problem(what + " unavailable")
-	}
-	if e = f.Close(); e != nil {
-		return problem(what + " unavailable")
-	}
-	if e = os.Rename(f.Name(), p); e != nil {
-		return problem(what + " unavailable")
-	}
-	if e = syncDirectory(d); e != nil {
-		return problem(what + " durability uncertain")
-	}
-	return nil
+	return problem(what + " unavailable")
 }
 func (m *Manager) Profiles() ([]Profile, error) {
 	d, e := m.dir()

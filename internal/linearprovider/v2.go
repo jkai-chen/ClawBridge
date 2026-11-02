@@ -30,6 +30,13 @@ func UpdatedAfterTime(value string) (time.Time, bool) {
 	return t, e == nil && len(value) <= 64
 }
 
+// IntakeText says whether an issue's title or description changed since the
+// trusted signal that queued it.
+type IntakeText struct {
+	TextChangedSinceSignal bool   `json:"text_changed_since_signal"`
+	SignalAt               string `json:"signal_at,omitempty"`
+}
+
 type IssueV2 struct {
 	Issue
 	ProjectKnown bool     `json:"project_known"`
@@ -65,6 +72,10 @@ type IssueV2 struct {
 	DescriptionKnown bool `json:"-"`
 	// UpdatedAt is Linear's last-update time when the read returned it.
 	UpdatedAt string `json:"updated_at,omitempty"`
+	// Intake is set by a ClawBridge issue read, and only for an issue the
+	// project's intake queue is holding to the text its trusted signal
+	// vouched for (FR57).
+	Intake *IntakeText `json:"intake,omitempty"`
 	// The team-scoped fields a team move clears, and the sub-issues it
 	// refuses on (FR7 M2, M3); each is set only when the read reported it.
 	CycleSet      bool     `json:"cycle_set,omitempty"`

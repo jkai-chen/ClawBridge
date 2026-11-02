@@ -2891,7 +2891,27 @@ so add the label once the issue exists.
   someone again without a link keeps their link; removing them drops it. The TUI's trust add doesn't link.
 - Anyone else's signal, a bot's, or one whose author can't be proven only notifies the coordinator.
 - An issue's title and description never route anything. They become the agent's task, and the trusted person
-  vouches for them as they stood at that moment.
+  vouches for them as they stood at the signal: ClawBridge keeps their SHA-256 hashes (never the text). The
+  server's own reads of the issue, as the ClawBridge Linear app, compare them (the intake pass re-reads at most
+  five queued issues per pass, each at most every ten minutes, counted in the project's Linear budget). Your own
+  profile's reads never compare: Linear renders issue mentions differently to the app and to a person, so a client
+  read (`clawbridge linear issue`, the MCP issue read) only shows the server's stored verdict, as
+  `intake.text_changed_since_signal` with the `signal_at` time. If either hash differs, the coordinator is told
+  once. A flag set when the signal is queued (the issue's last update was more than five seconds after it) means
+  only "changed after the signal, maybe not the text; check the issue history", and its notice says so.
+  `intake list` shows reason `text_changed`, or `text_changed_unsent` / `text_maybe_unsent` while there was no
+  coordinator to tell; the notice then goes out, with the original one if it was never sent, when a coordinator
+  exists. The new
+  text is not vouched for until the person adds the label again or delegates the issue again within moments of
+  the change they saw (a mention does not count, and an edit made more than five seconds after the label or
+  delegation is not vouched by it), or a project lead or owner runs `clawbridge intake rearm ISSUE` in their own
+  terminal (no `--session`, no agent environment, their own device on a hosted server, not a CI device). That
+  command reads the issue with their Linear connection and shows the title and the start of the description, then
+  asks them to confirm (`--confirm` skips the question but still prints the text, and is meant for a person's own
+  terminal). It sends only the update time they saw: the server reads the issue as the app, and takes that read's
+  hashes as the new baseline only if the issue is still at that update. A coordinator session's rearm, or any
+  without that proof or if the issue changed since, still reopens the issue to its next signal but leaves the flag
+  in place and says `text_vouched: false`.
 
 **Modes:** `clawbridge intake policy set --intake-mode off|notify`. The default is `notify`. Offers and automatic
 assignment come later.

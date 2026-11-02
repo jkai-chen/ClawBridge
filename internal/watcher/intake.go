@@ -294,6 +294,7 @@ func (w *Watcher) intake(ctx context.Context, svc *linearboard.Service, scope bu
 	for _, src := range sources {
 		run.source(ctx, src.source, src.subject, src.read)
 	}
+	run.holdText(ctx)
 	// The calls made are charged even when the share has run out.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), intakeChargeTimeout)
 	defer cancel()
@@ -1241,4 +1242,87 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+const (
+	// intakeTextPerTick bounds the issues one intake pass re-reads to hold
+	// them to their signal's text (FR57); each read is one Linear call
+	// counted in the pass's charge.
+	intakeTextPerTick = 5
+	// intakeTextEvery is how long a queued issue goes unread by that check.
+	intakeTextEvery = 10 * time.Minute
+)
+
+// holdText re-reads a few of the project's queued, offered or assigned
+// issues that are not yet marked, oldest check first, and gives the bus
+// their current text hashes: if the title or description no longer matches
+// what the trusted signal recorded, the bus marks the row and tells the
+// coordinator once. A read that fails is skipped; the next pass tries it
+// again. It stops when the project's share has run out.
+func (r *intakeRun) holdText(ctx context.Context) {
+	// Changes found while nobody could be told are told now, with no Linear
+	// read.
+	_ = r.w.Store.IntakeTextRetry(ctx, r.pid)
+	rows, err := r.w.Store.IntakeTextCandidates(ctx, r.pid)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	now := r.w.now()
+	r.w.mu.Lock()
+	if key := r.pid + "|text|cap"; len(rows) >= bus.IntakeTextCandidateCap && now.Sub(r.w.skipLogged[key]) >= skipLogEvery {
+		if r.w.skipLogged == nil {
+			r.w.skipLogged = map[string]time.Time{}
+		}
+		r.w.skipLogged[key] = now
+		logf("watcher: intake: project %s has %d or more live queue rows; the text check lists only the first %d", r.pid, bus.IntakeTextCandidateCap, bus.IntakeTextCandidateCap)
+	}
+	if r.w.textChecked == nil {
+		r.w.textChecked = map[string]time.Time{}
+	}
+	// Rows that left the queue take their last-check time with them.
+	live := map[string]bool{}
+	for _, uuid := range rows {
+		live[r.pid+"|"+uuid] = true
+	}
+	for key := range r.w.textChecked {
+		if strings.HasPrefix(key, r.pid+"|") && !live[key] {
+			delete(r.w.textChecked, key)
+		}
+	}
+	var due []string
+	for _, uuid := range rows {
+		// An issue this pass just queued was read, and stamped, a moment ago.
+		if slices.Contains(r.poll.Queued, uuid) {
+			r.w.textChecked[r.pid+"|"+uuid] = now
+			continue
+		}
+		if at, ok := r.w.textChecked[r.pid+"|"+uuid]; !ok || now.Sub(at) >= intakeTextEvery {
+			due = append(due, uuid)
+		}
+	}
+	slices.SortStableFunc(due, func(a, b string) int {
+		return r.w.textChecked[r.pid+"|"+a].Compare(r.w.textChecked[r.pid+"|"+b])
+	})
+	r.w.mu.Unlock()
+	if len(due) > intakeTextPerTick {
+		due = due[:intakeTextPerTick]
+	}
+	for _, uuid := range due {
+		if deferred(ctx) {
+			return
+		}
+		r.w.mu.Lock()
+		r.w.textChecked[r.pid+"|"+uuid] = now
+		r.w.mu.Unlock()
+		r.poll.Calls++
+		issue, err := r.svc.IssueV2(ctx, r.scope, uuid)
+		if err != nil {
+			r.skipped("text", uuid, "text_unreadable", errClass(err))
+			continue
+		}
+		title := sha256.Sum256([]byte(issue.Title))
+		if _, err = r.w.Store.IntakeTextCheck(ctx, r.pid, issue.ID, hex.EncodeToString(title[:]), issue.DescriptionSHA256); err != nil {
+			r.skipped("text", issue.ID, "text_check_failed", errClass(err))
+		}
+	}
 }

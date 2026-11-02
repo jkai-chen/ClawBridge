@@ -261,7 +261,8 @@ func TestIntakeCapsOnlyRise(t *testing.T) {
 	}
 	edited := issue
 	edited.DescriptionSHA256 = "d2"
-	enqueue(IntakeEvent{Signal: "S2", Issue: edited, Actor: trustedUser, Trusted: true})
+	edited.UpdatedAt = "2026-10-23T10:00:01Z"
+	enqueue(IntakeEvent{Signal: "S2", Issue: edited, Actor: trustedUser, Trusted: true, At: "2026-10-23T10:00:00Z"})
 	var digest string
 	if e := h.s.db.QueryRow(`SELECT queued_description_sha256 FROM intake_queue`).Scan(&digest); e != nil || digest != "d2" || row()["trigger_cap"] != "auto" || row()["signals"] != "S1,S2" {
 		t.Fatal("a trusted transition did not raise the cap and re-record the text:", row(), digest)

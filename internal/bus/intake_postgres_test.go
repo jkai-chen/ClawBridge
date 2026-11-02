@@ -116,3 +116,75 @@ func TestPostgresIntakeWithoutASession(t *testing.T) {
 		t.Fatal("the sessionless dismiss audit:", n)
 	}
 }
+
+// FR57: on the hosted authority the server's own check marks an edited row
+// once, a client's read only shows the stored mark, and no session can run
+// the check.
+func TestPostgresIntakeTextCheckMarksOnce(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	f.worker("coord")
+	if _, err := f.in("coordinator_set", "coord", map[string]any{"target_session": "coord"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.in("intake_policy_set", "coord", map[string]any{"signals": []any{"S5"}}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := f.in("intake_token_create", "coord", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prove := func(context.Context, string, string, string) (IntakeIssue, error) {
+		return IntakeIssue{UUID: intakeIssue, Identifier: "FIX-7", TitleSHA256: "t1", DescriptionSHA256: "d1", UpdatedAt: "2026-10-23T10:00:00Z"}, nil
+	}
+	if out, err := f.s.IntakeRequest(context.Background(), created.Data.(map[string]any)["token"].(string), intakeIssue, prove); err != nil || out["result"] != "queued" {
+		t.Fatal(out, err)
+	}
+	var pid string
+	if err := f.s.db.QueryRow(`SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1 AND p.slug='p'`, f.workspace).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	status := func() map[string]any {
+		t.Helper()
+		out, err := f.in("intake_text_status", "coord", map[string]any{"issue_uuid": intakeIssue})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Data.(map[string]any)
+	}
+	if got := status(); got["tracked"] != true || got["changed"] != false {
+		t.Fatal(got)
+	}
+	if _, err := f.in("intake_text_check", "coord", map[string]any{"issue_uuid": intakeIssue, "title_sha256": "t1", "description_sha256": "d2"}); err == nil {
+		t.Fatal("a session ran the comparison")
+	}
+	for i := 0; i < 3; i++ {
+		if st, err := f.s.IntakeTextCheck(context.Background(), pid, intakeIssue, "t1", "d2"); err != nil || !st.Changed {
+			t.Fatal(st, err)
+		}
+	}
+	if got := status(); got["changed"] != true {
+		t.Fatal(got)
+	}
+	// The coordinator session's rearm, with or without the app's read, does
+	// not vouch.
+	rearmed, err := f.s.ExecuteAsIdentity(WithAppText(context.Background(), AppText{TitleSHA256: strings.Repeat("a", 64), DescriptionSHA256: strings.Repeat("b", 64), UpdatedAt: "2026-10-23T11:00:00Z"}), Identity{Principal: f.owner, Issuer: GoogleIssuer, Subject: "sub-owner"}, Request{Operation: "intake_rearm", Workspace: f.workspace, Project: "p", Session: "coord", Args: map[string]any{"instance": "coord-i", "issue_uuid": intakeIssue, "agent_marker": "", "updated_at": "2026-10-23T11:00:00Z"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := rearmed.Data.(map[string]any); out["text_vouched"] != false || out["reason"] != "text_changed" {
+		t.Fatal(out)
+	}
+	inbox, err := f.in("inbox", "coord", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	followUps := 0
+	for _, m := range inbox.Data.(map[string]any)["messages"].([]map[string]any) {
+		if m["kind"] == "intake" && strings.Contains(m["body"].(string), "changed after the trusted signal") {
+			followUps++
+		}
+	}
+	if followUps != 1 {
+		t.Fatal("follow-ups:", followUps)
+	}
+}

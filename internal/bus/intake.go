@@ -92,7 +92,7 @@ func intakePolicy(ctx context.Context, tx *transaction, pid string) (map[string]
 
 func intakeOperation(op string) bool {
 	switch op {
-	case "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm":
+	case "intake_policy_get", "intake_policy_set", "intake_trust_add", "intake_trust_remove", "intake_trust_list", "intake_token_create", "intake_token_list", "intake_token_revoke", "intake_list", "intake_dismiss", "intake_rearm", "intake_text_status":
 		return true
 	}
 	return false
@@ -142,6 +142,15 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 			args = append(args, state)
 		}
 		return query(ctx, tx, q+` ORDER BY created_at,issue_uuid LIMIT 200`, args...)
+	case "intake_text_status":
+		// What the server last found, for a client's issue read. The
+		// client's own read renders the text differently from the app's, so
+		// it never compares hashes: this reads and writes nothing.
+		issue, e := lowerUUID(a, "issue_uuid", true)
+		if e != nil {
+			return nil, e
+		}
+		return intakeTextStatus(ctx, tx, pid, issue)
 	case "intake_dismiss", "intake_rearm":
 		if !lead && (actor == nil || p["coordinator_session"] != actor["id"]) {
 			return nil, scoped("project lead or owner, or the coordinator session, required", "forbidden")
@@ -154,6 +163,7 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 		if e != nil {
 			return nil, scopedError(e, "this issue is not in the intake queue", "not_found")
 		}
+		vouched := false
 		if r.Operation == "intake_dismiss" {
 			if str(row, "state") == "assigned" {
 				return nil, scoped("the issue is assigned; release the assignment instead", "conflict")
@@ -163,6 +173,12 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 			// A rearm lets the issue's next signal count even though it
 			// predates the row's close (§3.5).
 			_, e = tx.ExecContext(ctx, `UPDATE intake_queue SET rearmed=1,updated_at=? WHERE project_id=? AND issue_uuid=?`, nowRaw, pid, issue)
+			if e == nil && lead && s.ownTerminal(actor, a) {
+				// Only a person, in their own terminal, vouches for text
+				// they read (FR57): the hashes are theirs. A session's rearm,
+				// or one without hashes, leaves a text-change mark in place.
+				vouched, e = vouchText(ctx, tx, pid, issue, a)
+			}
 		}
 		if e != nil {
 			return nil, e
@@ -170,7 +186,11 @@ func (s *Store) intakeOp(ctx context.Context, tx *transaction, w, p map[string]a
 		if e = audit(strings.TrimPrefix(r.Operation, "intake_"), map[string]any{"issue_uuid": issue}); e != nil {
 			return nil, e
 		}
-		return one(ctx, tx, `SELECT issue_uuid,state,rearmed,reason FROM intake_queue WHERE project_id=? AND issue_uuid=?`, pid, issue)
+		out, e := one(ctx, tx, `SELECT issue_uuid,state,rearmed,reason FROM intake_queue WHERE project_id=? AND issue_uuid=?`, pid, issue)
+		if e == nil && r.Operation == "intake_rearm" {
+			out["text_vouched"] = vouched
+		}
+		return out, e
 	}
 	if !lead {
 		return nil, scoped("project lead or owner permission required", "forbidden")
@@ -407,10 +427,28 @@ func (s *Store) intakeEnqueue(ctx context.Context, tx *transaction, w map[string
 		signals := mergeSignals(str(row, "signals"), ev.Signal)
 		switch str(row, "state") {
 		case "queued", "offered", "assigned":
-			// IN2-L1: nothing lowers a cap; a raise re-records the text the
-			// raising actor vouched for.
+			// IN2-L1: nothing lowers a cap. A raise, or a later trusted
+			// transition, re-records the text only when the issue had not
+			// changed more than IntakeSkew after the transition (FR57):
+			// otherwise the person may not have seen this text, and the
+			// stored hashes and any flag stay for the intake pass to judge.
+			vouches := eventRevouches(ev)
 			if intakeModes[limit] > intakeModes[str(row, "trigger_cap")] {
-				if _, err = tx.ExecContext(ctx, `UPDATE intake_queue SET signals=?,trigger_cap=?,trigger_actor=?,cap_set_by=?,queued_title_sha256=?,queued_description_sha256=?,queued_updated_at=?,updated_at=? WHERE project_id=? AND issue_uuid=?`, signals, limit, ev.Actor, setBy, ev.Issue.TitleSHA256, ev.Issue.DescriptionSHA256, ev.Issue.UpdatedAt, nowRaw, pid, ev.Issue.UUID); err != nil {
+				if _, err = tx.ExecContext(ctx, `UPDATE intake_queue SET signals=?,trigger_cap=?,trigger_actor=?,cap_set_by=?,updated_at=? WHERE project_id=? AND issue_uuid=?`, signals, limit, ev.Actor, setBy, nowRaw, pid, ev.Issue.UUID); err != nil {
+					return "", err
+				}
+				if vouches {
+					if err = restampText(ctx, tx, pid, ev); err != nil {
+						return "", err
+					}
+				}
+			} else if vouches && intakeNewerThanStamp(ev, row) {
+				// A replay of the old transition is not newer than the
+				// update the row's text was read with.
+				if _, err = tx.ExecContext(ctx, `UPDATE intake_queue SET signals=?,updated_at=? WHERE project_id=? AND issue_uuid=?`, signals, nowRaw, pid, ev.Issue.UUID); err != nil {
+					return "", err
+				}
+				if err = restampText(ctx, tx, pid, ev); err != nil {
 					return "", err
 				}
 			} else if _, err = tx.ExecContext(ctx, `UPDATE intake_queue SET signals=?,updated_at=? WHERE project_id=? AND issue_uuid=?`, signals, nowRaw, pid, ev.Issue.UUID); err != nil {
@@ -442,8 +480,23 @@ func (s *Store) intakeEnqueue(ctx context.Context, tx *transaction, w map[string
 		return "", err
 	}
 	// Only notify exists so far: offer and auto are refused by the policy.
-	if lowerMode(str(policy, "mode"), limit) == "notify" {
+	notify := lowerMode(str(policy, "mode"), limit) == "notify"
+	if notify {
 		if err = s.intakeNotice(ctx, tx, w, pid, ev, limit, nowRaw); err != nil {
+			return "", err
+		}
+	}
+	// A trusted signal for an issue that changed more than IntakeSkew
+	// after it (FR57): the person may not have seen this text. The row is
+	// queued flagged, and the coordinator told so once (markText). An
+	// untrusted signal, which reaches here too, vouches for nothing and is
+	// not flagged.
+	if ev.Trusted && ev.Actor != "" && !eventVouchesText(ev) {
+		row, e := one(ctx, tx, `SELECT issue_identifier,signals,trigger_actor,trigger_cap,notified_at,queued_updated_at FROM intake_queue WHERE project_id=? AND issue_uuid=?`, pid, ev.Issue.UUID)
+		if e != nil {
+			return "", e
+		}
+		if err = s.markText(ctx, tx, w, pid, ev.Issue.UUID, row, textFlag{maybe: true, signalAt: ev.At}); err != nil {
 			return "", err
 		}
 	}
@@ -547,21 +600,25 @@ func (s *Store) intakeNotice(ctx context.Context, tx *transaction, w map[string]
 	fmt.Fprintf(&b, "\nRead it: clawbridge linear issue %s", ev.Issue.UUID)
 	fmt.Fprintf(&b, "\nRoute it by proposing an assignment for a session, or dismiss it: clawbridge intake dismiss %s", ev.Issue.UUID)
 	b.WriteString("\n" + intakeLine)
-	body := b.String()
+	if err = s.insertIntakeMessage(ctx, tx, w, pid, coordinator[0], b.String(), nowRaw); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE intake_queue SET notified_at=? WHERE project_id=? AND issue_uuid=?`, nowRaw, pid, ev.Issue.UUID)
+	return err
+}
+
+// insertIntakeMessage sends an intake notice, kind intake, to one
+// coordinator session.
+func (s *Store) insertIntakeMessage(ctx context.Context, tx *transaction, w map[string]any, pid string, c map[string]any, body, nowRaw string) error {
 	retention := asInt(w["retention_days"])
 	if retention < 1 {
 		retention = 30
 	}
 	id := newID("msg_")
-	c := coordinator[0]
-	if _, err = tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'intake',?,?,?,?,?,?,NULL)`, id, pid, pid, c["id"], str(c, "name"), id, body, nowRaw, layout(at(nowRaw).AddDate(0, 0, retention)), s.principal, newID("intake_"), digestOf(body)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(id,project_id,source_project_id,sender_id,address,thread_id,reply_to,kind,body,created_at,expires_at,created_by_principal,operation_id,payload_hash,coordination) VALUES(?,?,?,?,?,?,NULL,'intake',?,?,?,?,?,?,NULL)`, id, pid, pid, c["id"], str(c, "name"), id, body, nowRaw, layout(at(nowRaw).AddDate(0, 0, retention)), s.principal, newID("intake_"), digestOf(body)); err != nil {
 		return err
 	}
-	if err = insertDeliveries(ctx, tx, pid, id, []string{str(c, "id")}); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE intake_queue SET notified_at=? WHERE project_id=? AND issue_uuid=?`, nowRaw, pid, ev.Issue.UUID)
-	return err
+	return insertDeliveries(ctx, tx, pid, id, []string{str(c, "id")})
 }
 
 // IntakeGrant is what a valid intake token allows: queuing issues of one

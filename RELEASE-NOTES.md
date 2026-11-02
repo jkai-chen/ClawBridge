@@ -25,6 +25,13 @@
   sent. It needs the server and the client on this release; an older client keeps the 1.0 behaviour
   (`clawbridge self-update`). No schema change. Linear config scope: none.
 
+- **Intake holds the issue text to what the trusted person saw.** If an issue's title or description changes after
+  the trusted signal, the server's own reads (the intake pass) flag it and tell the coordinator once, and
+  your issue read shows `text_changed_since_signal`. The new text isn't vouched for until the label is re-added or
+  the issue delegated again, or a project lead or owner rearms it from their own terminal, confirms the text they
+  see, and the issue hasn't changed since. Before, the hashes kept at the signal were never checked.
+  No schema change. Linear config scope: none.
+
 ## Install and upgrade
 
 - **`clawbridge self-update --rollback` puts back the binary the last update replaced.** Each update now keeps the

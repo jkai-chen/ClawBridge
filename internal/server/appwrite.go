@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"clawbridge/internal/linearconn"
 	"clawbridge/internal/linearpace"
 	"clawbridge/internal/linearprovider"
+	"clawbridge/internal/principal"
 )
 
 // appWriteTimeout bounds a Linear write the server runs as the app. Once it
@@ -200,6 +203,8 @@ func (w *AppWriter) Execute(parent context.Context, identity bus.Identity, r bus
 		return w.subscribersBackfill(parent, identity, r)
 	case "linear_write_status":
 		return w.writeStatus(parent, identity, r)
+	case "intake_rearm":
+		return w.intakeRearm(parent, identity, r)
 	case "linear_write":
 	default:
 		return bus.Result{}, appRefusal("unsupported operation")
@@ -746,4 +751,61 @@ func appWriter(store *bus.Store) (*AppWriter, error) {
 	}
 	log.Printf("clawbridge: linear app: configured")
 	return &AppWriter{App: app, Store: store}, nil
+}
+
+// intakeRearm serves intake_rearm. A person's own-terminal rearm that
+// confirms the update time of an issue they read (FR57) is the one that can
+// vouch for its text, and the text's hashes must be the app's: Linear
+// renders mention tags differently to the app, whose reads stamped the
+// queue row and whose reads the intake pass compares, than to the person's
+// profile. So the server reads the issue as the app here and hands the
+// hashes to the bus on the request's context (bus.WithAppText), which no
+// client can set; the bus takes them only if the app's read is of the very
+// update the person confirmed. Every other rearm, and any failure here,
+// goes on to the bus without them and is not vouched. The bus decides the
+// caller's role and own-terminal proof again; this reads only for a request
+// that could pass them.
+func (w *AppWriter) intakeRearm(parent context.Context, identity bus.Identity, r bus.Request) (bus.Result, error) {
+	exec := identityExecutor{w.Store, identity}
+	confirmed, _ := r.Args["updated_at"].(string)
+	marker, sent := r.Args["agent_marker"].(string)
+	issue, _ := r.Args["issue_uuid"].(string)
+	issue = strings.ToLower(issue)
+	if confirmed == "" || r.Session != "" || !sent || marker != "" || identity.Issuer != bus.DeviceIssuer || principal.CI(identity.Principal) || !linearprovider.ValidID(issue) {
+		return exec.Execute(parent, r)
+	}
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	if text, ok := w.appText(ctx, identity, r, issue); ok {
+		parent = bus.WithAppText(parent, text)
+	}
+	return exec.Execute(parent, r)
+}
+
+// appText is the app's read of an issue for a project lead or owner:
+// its title and description hashes and update time. ok is false when the
+// caller is neither, or the read fails or lacks the description.
+func (w *AppWriter) appText(ctx context.Context, identity bus.Identity, r bus.Request, issue string) (bus.AppText, bool) {
+	none := bus.AppText{}
+	if w.member(ctx, identity, r.Workspace) != nil {
+		return none, false
+	}
+	instance, _ := r.Args["instance"].(string)
+	access, err := identityExecutor{w.Store, identity}.Execute(ctx, bus.Request{Operation: "taskboard_access", Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance, "ledger": 1}})
+	if err != nil {
+		return none, false
+	}
+	if role, _ := access.Data.(map[string]any)["project_role"].(string); role != "owner" && role != "lead" {
+		return none, false
+	}
+	service, _, err := w.service(ctx, identity)
+	if err != nil {
+		return none, false
+	}
+	read, err := service.IssueV2(ctx, bus.Request{Workspace: r.Workspace, Project: r.Project, Session: r.Session, Args: map[string]any{"instance": instance}}, issue)
+	if err != nil || read.ID != issue || !read.DescriptionKnown || read.DescriptionSHA256 == "" || read.UpdatedAt == "" {
+		return none, false
+	}
+	title := sha256.Sum256([]byte(read.Title))
+	return bus.AppText{TitleSHA256: hex.EncodeToString(title[:]), DescriptionSHA256: read.DescriptionSHA256, UpdatedAt: read.UpdatedAt}, true
 }

@@ -42,7 +42,7 @@ func TestCheckChannel(t *testing.T) {
 		}), Pass, "active: ", ""},
 		{"unconfirmed", with(ready, func(s *ChannelState) {
 			s.Record = record(ctxwatch.ChannelUnconfirmed, ctxwatch.ChannelReasonUnconfirmed, alive, time.Second)
-		}), Pass, "unconfirmed: no push confirmed yet. The notifier keeps typing hints until a push is confirmed.", ""},
+		}), Pass, "unconfirmed: no push confirmed yet. The notifier waits 10 s for the channel before typing, while it is unconfirmed, so its first push can be confirmed.", ""},
 		{"unconfirmed, custom endpoint", with(ready, func(s *ChannelState) {
 			s.Record = record(ctxwatch.ChannelUnconfirmed, ctxwatch.ChannelReasonCustomEndpoint, alive, time.Second)
 		}), Pass, "unconfirmed: custom ANTHROPIC_BASE_URL", ""},
@@ -166,9 +166,14 @@ func TestCheckChannelNotifierAndDevFlag(t *testing.T) {
 		stands = "The notifier stands down while the channel is active."
 		keeps  = "The notifier keeps typing hints until a push is confirmed."
 		types  = "The notifier keeps typing hints."
+		waits  = "The notifier waits 10 s for the channel before typing"
 		devMsg = "launched with --dangerously-load-development-channels, which is for local development only"
 		devAct = "Relaunch with --channels plugin:clawbridge@clawbridge after the admin step (clawbridge channel allow)"
 	)
+	first := rec(ctxwatch.ChannelUnconfirmed, false, time.Second)
+	first.Reason = ctxwatch.ChannelReasonUnconfirmed
+	noArgv := rec(ctxwatch.ChannelUnconfirmed, false, time.Second)
+	noArgv.Reason = ctxwatch.ChannelReasonNoArgv
 	for _, tc := range []struct {
 		name   string
 		r      *ctxwatch.ChannelState
@@ -176,6 +181,8 @@ func TestCheckChannelNotifierAndDevFlag(t *testing.T) {
 		dev    bool
 		says   string
 	}{
+		{"no push confirmed yet", first, Pass, false, waits},
+		{"unconfirmed for another reason", noArgv, Pass, false, keeps},
 		{"dev flag, active", rec(ctxwatch.ChannelActive, true, time.Second), Warn, true, stands},
 		{"dev flag, unconfirmed", rec(ctxwatch.ChannelUnconfirmed, true, time.Second), Warn, true, keeps},
 		{"dev flag, stale", rec(ctxwatch.ChannelActive, true, 91*time.Second), Warn, true, "the notifier keeps typing the notice."},

@@ -38,7 +38,7 @@ const (
 	// pushEvery is the least time between two pushes.
 	pushEvery = 60 * time.Second
 	// confirmWithin is how long a push waits for the agent's tool call.
-	confirmWithin = 120 * time.Second
+	confirmWithin = ctxwatch.ChannelConfirmWithin
 	// turnRecheck is how often a running turn is looked at again.
 	turnRecheck = 5 * time.Second
 	// askTimeout bounds one ask of the counts.

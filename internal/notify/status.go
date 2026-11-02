@@ -134,16 +134,18 @@ type Binding struct {
 	Command []string `json:"command,omitempty"`
 }
 type Config struct {
-	Binding        Binding
-	Executor       Executor
-	StatePath      string
-	Interval       time.Duration
-	Once           bool
-	Output         io.Writer
-	Diagnostics    io.Writer
-	CodexCommand   string
-	Runner         Runner
-	Wait           func(context.Context, time.Duration) error
+	Binding      Binding
+	Executor     Executor
+	StatePath    string
+	Interval     time.Duration
+	Once         bool
+	Output       io.Writer
+	Diagnostics  io.Writer
+	CodexCommand string
+	Runner       Runner
+	Wait         func(context.Context, time.Duration) error
+	// Now is the clock for the channel hold-off; nil is time.Now.
+	Now            func() time.Time
 	RequestTimeout time.Duration
 	HostTimeout    time.Duration
 	// ContextDir holds the binding records; when set, the watcher reports

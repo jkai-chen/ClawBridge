@@ -71,6 +71,12 @@
   route, names the state file, and says to delete it (it holds only the checkpoint) or start with a new `--state`
   file; any other mismatch keeps the generic message. A new state may type one extra "call inbox" hint, and nothing is
   lost. No schema change. Linear config scope: none.
+- **A new channel can now confirm its first push.** While a session's channel is `unconfirmed` ("no push confirmed
+  yet") and its agent is idle, the notifier waits 10 s for the channel before typing a hint, once per batch. Before,
+  its typed line started the turn first, the channel had nothing to push, and the channel stayed `unconfirmed`
+  forever. If the channel pushed meanwhile, the batch is left to it; if the push isn't confirmed within 120 s, the
+  notifier types it. The other unconfirmed reasons (no command line, a custom endpoint, Windows) still type at once.
+  No schema change. Linear config scope: none.
 
 ## Fixes
 

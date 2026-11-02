@@ -60,14 +60,15 @@ func startWaker(ctx context.Context, s Streamer, b Binding) *waker {
 // wait sleeps for the poll interval, or the safety interval while the
 // stream is open, and returns early on a wake. A stream that ended is
 // reported once, and notify polls from then on.
-func (w *waker) wait(ctx context.Context, c Config) error {
+func (w *waker) wait(ctx context.Context, c Config, limit time.Duration) error {
 	if w == nil {
-		return c.Wait(ctx, c.Interval)
+		return c.Wait(ctx, capWait(c.Interval, limit))
 	}
 	d := c.Interval
 	if w.live {
 		d = max(c.Interval, streamSafety)
 	}
+	d = capWait(d, limit)
 	t := time.NewTimer(d)
 	defer t.Stop()
 	for {
@@ -94,6 +95,15 @@ func (w *waker) wait(ctx context.Context, c Config) error {
 			return nil
 		}
 	}
+}
+
+// capWait shortens d to limit when limit is set (a deadline the loop must
+// re-evaluate at), never below a second.
+func capWait(d, limit time.Duration) time.Duration {
+	if limit > 0 && limit < d {
+		return max(limit, time.Second)
+	}
+	return d
 }
 
 // NoticeText is the only text the command adapter is ever given to show or

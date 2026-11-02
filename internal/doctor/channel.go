@@ -144,6 +144,8 @@ func checkChannel(s ChannelState, now time.Time, add func(Check)) {
 			// The state's own sentence already says what the notifier does.
 		case ctxwatch.ChannelSkipsTyping(*r, now):
 			c.Message += " The notifier stands down while the channel is active."
+		case r.State == ctxwatch.ChannelUnconfirmed && r.Reason == ctxwatch.ChannelReasonUnconfirmed:
+			c.Message += " The notifier waits 10 s for the channel before typing, while it is unconfirmed, so its first push can be confirmed."
 		case r.State == ctxwatch.ChannelUnconfirmed:
 			c.Message += " The notifier keeps typing hints until a push is confirmed."
 		default:

@@ -59,6 +59,10 @@ const (
 // believed: the channel server rewrites it every 30 s.
 const ChannelStateFresh = 90 * time.Second
 
+// ChannelConfirmWithin is how long a push waits for the agent's channel
+// turn before the channel server gives up on it (fallback).
+const ChannelConfirmWithin = 120 * time.Second
+
 // SaveChannelState writes session's channel record.
 func SaveChannelState(dir, session string, st ChannelState) error {
 	path, err := sidePath(dir, session, ".channel.json")
@@ -107,6 +111,20 @@ func ChannelSkipsTyping(st ChannelState, now time.Time) bool {
 		return false
 	}
 	return st.State == ChannelActive && st.ConfirmedAt != "" && ProcessAlive(st.PID)
+}
+
+// ChannelMayHoldOff says whether a notify adapter may wait a moment for the
+// channel before typing (FR59): its record is fresh, its server alive, and
+// it is unconfirmed for the one reason that a first push can still clear
+// ("no push confirmed yet"). The other unconfirmed reasons (no command line,
+// a custom endpoint) may never confirm, so those type at once. The caller
+// also checks that the agent is idle.
+func ChannelMayHoldOff(st ChannelState, now time.Time) bool {
+	at, err := time.Parse(time.RFC3339, st.UpdatedAt)
+	if err != nil || now.Sub(at) > ChannelStateFresh || at.Sub(now) > time.Minute {
+		return false
+	}
+	return st.State == ChannelUnconfirmed && st.Reason == ChannelReasonUnconfirmed && ProcessAlive(st.PID)
 }
 
 // TurnRecord is when the agent's current or last turn started and ended,

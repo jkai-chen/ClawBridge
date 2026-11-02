@@ -305,14 +305,30 @@ them again, it needs a newly confirmed push to be `active`.
 adapter](#command-adapter-wake-an-idle-terminal) (or the Codex adapter) running
 for the session as before. It skips typing only while the channel is confirmed
 `active` (a fresh record from a live channel server), and then never marks the
-skipped batch handled: when the channel falls back, it types that batch. Until
-the first confirmed push, a batch may get both a channel turn and a typed line;
-both say "call inbox". When a push is silently dropped, the wake can take about 4
-minutes (120 s to fall back, the 60 s between pushes, and the notifier's minute
-re-check). After a turn you interrupt with Esc, the wake can take up to 10
-minutes from that turn's start: the turn counts as running until then, so the
-channel doesn't push, and while the channel is `active` the notifier doesn't
-type either.
+skipped batch handled: when the channel falls back, it types that batch. When a
+push is silently dropped, the wake can take about 4 minutes (120 s to fall back,
+the 60 s between pushes, and the notifier's minute re-check). After a turn you
+interrupt with Esc, the wake can take up to 10 minutes from that turn's start:
+the turn counts as running until then, so the channel doesn't push, and while
+the channel is `active` the notifier doesn't type either.
+
+**The first confirmation.** The channel pushes only to an idle agent, a few
+seconds after a message arrives, and only its own push can confirm it. So while
+the channel is `unconfirmed` ("no push confirmed yet", its record fresh and its
+server alive) and the agent is idle, the notifier holds off 10 s before it types
+a batch, once per batch. If the channel pushed that batch meanwhile, the notifier
+types nothing and leaves the batch to it; the push is confirmed by the agent's
+channel turn. If the push isn't confirmed within 120 s, the notifier types the
+batch then. With no push after the 10 s, it types as before. The other
+unconfirmed reasons (the command line unreadable, a custom endpoint, Windows) may
+never confirm, so the notifier types at once there, and for a busy agent.
+
+**Before v1.0.1,** the notifier typed first: its line started the agent's turn,
+the agent acked the message, and the channel had nothing to push, so a channel
+could stay `unconfirmed` forever. To confirm one by hand: stop the session's
+notifier (by its PID) for one wake, send the session a message while the agent is
+idle, check that `~/.clawbridge/context/<session>.channel.json` shows `active`
+with a `confirmed_at`, then start the notifier again.
 
 **Sessions started with `--mcp-config FILE --strict-mcp-config`.** Claude Code
 2.1.314 doesn't start a plugin's servers under `--strict-mcp-config` (checked
@@ -349,13 +365,12 @@ exactly one of these:
 | State | Meaning |
 | --- | --- |
 | `active` | A push was confirmed by the session's own channel turn; the notifier stands down |
-| `unconfirmed` | The channel may work, but no push is confirmed yet; the notifier still types until one is |
+| `unconfirmed` | The channel may work, but no push is confirmed yet; the notifier waits 10 s for the channel before typing (when the reason is "no push confirmed yet"), and otherwise types, until one is confirmed |
 | `inactive: REASON` | It can't work: for example not launched with `--channels`, the plugin not installed, not allowlisted, a third-party provider, no MCP server record, or a stale record. A warning when the session asked for a channel (its turn hook is installed), a pass otherwise |
 | `fallback: REASON` | A push went unanswered for 120 s, or the channel server couldn't read the session's counts for over 60 s; the notifier types again. A warning |
 
 Every line with a record also says whether the notifier stands down ("The
-notifier stands down while the channel is active.") or keeps typing hints (until
-a push is confirmed, while `unconfirmed`). If the session was launched with
+notifier stands down while the channel is active.") or waits 10 s for the channel before typing (while `unconfirmed` with "no push confirmed yet") or keeps typing hints. If the session was launched with
 `--dangerously-load-development-channels` instead of `--channels` (a flag for
 local development only), the line is a warning, whatever the state, and the
 action is to relaunch with `--channels plugin:clawbridge@clawbridge` after the

@@ -269,3 +269,38 @@ func TestMarkChannelTurn(t *testing.T) {
 		t.Fatal("a zero seq was marked")
 	}
 }
+
+// FR59: the notifier may wait for a channel only while it is fresh, live and
+// unconfirmed for the one reason a first push clears.
+func TestChannelMayHoldOff(t *testing.T) {
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	rec := func(mutate func(*ChannelState)) ChannelState {
+		st := ChannelState{PID: os.Getpid(), State: ChannelUnconfirmed, Reason: ChannelReasonUnconfirmed, UpdatedAt: now.Add(-time.Second).Format(time.RFC3339)}
+		if mutate != nil {
+			mutate(&st)
+		}
+		return st
+	}
+	for _, tc := range []struct {
+		name string
+		st   ChannelState
+		want bool
+	}{
+		{"fresh, live, no push confirmed yet", rec(nil), true},
+		{"fresh at the limit", rec(func(s *ChannelState) { s.UpdatedAt = now.Add(-ChannelStateFresh).Format(time.RFC3339) }), true},
+		{"stale", rec(func(s *ChannelState) { s.UpdatedAt = now.Add(-ChannelStateFresh - time.Second).Format(time.RFC3339) }), false},
+		{"from the future", rec(func(s *ChannelState) { s.UpdatedAt = now.Add(2 * time.Minute).Format(time.RFC3339) }), false},
+		{"no time", rec(func(s *ChannelState) { s.UpdatedAt = "" }), false},
+		{"dead pid", rec(func(s *ChannelState) { s.PID = 0 }), false},
+		{"active", rec(func(s *ChannelState) { s.State, s.ConfirmedAt = ChannelActive, now.Format(time.RFC3339) }), false},
+		{"fallback", rec(func(s *ChannelState) { s.State = ChannelFallback }), false},
+		{"inactive", rec(func(s *ChannelState) { s.State = ChannelInactive }), false},
+		{"no reason", rec(func(s *ChannelState) { s.Reason = "" }), false},
+		{"no argv", rec(func(s *ChannelState) { s.Reason = ChannelReasonNoArgv }), false},
+		{"custom endpoint", rec(func(s *ChannelState) { s.Reason = ChannelReasonCustomEndpoint }), false},
+	} {
+		if got := ChannelMayHoldOff(tc.st, now); got != tc.want {
+			t.Errorf("%s: %v", tc.name, got)
+		}
+	}
+}

@@ -169,6 +169,7 @@ func Run(ctx context.Context, c Config) error {
 	backoff := time.Second
 	// skipped is the newest batch left to the channel, said once.
 	var skipped int64
+	var hold holdState
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -178,7 +179,7 @@ func Run(ctx context.Context, c Config) error {
 			err = probe()
 		}
 		if err == nil {
-			err = once(ctx, c, path, f, &state, &skipped)
+			err = once(ctx, c, path, f, &state, &skipped, &hold)
 		}
 		if err != nil {
 			if c.Once || IsPermanent(err) || ctx.Err() != nil {
@@ -197,7 +198,14 @@ func Run(ctx context.Context, c Config) error {
 			return nil
 		}
 		backoff = time.Second
-		if err = wake.wait(ctx, c); err != nil {
+		// A batch left to a push that is not yet confirmed is typed once
+		// the push is 120 s old: wake at that deadline, not at the next
+		// safety poll.
+		var limit time.Duration
+		if !hold.recheck.IsZero() {
+			limit = max(hold.recheck.Sub(c.now()), time.Second)
+		}
+		if err = wake.wait(ctx, c, limit); err != nil {
 			return err
 		}
 	}
@@ -212,10 +220,102 @@ func channelHasIt(c Config) bool {
 		return false
 	}
 	st, ok, err := ctxwatch.LoadChannelState(c.ContextDir, c.Binding.Session)
-	return err == nil && ok && ctxwatch.ChannelSkipsTyping(st, time.Now())
+	return err == nil && ok && ctxwatch.ChannelSkipsTyping(st, c.now())
 }
 
-func once(ctx context.Context, c Config, path string, f *checkpointFile, state *checkpoint, skipped *int64) error {
+func (c Config) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
+}
+
+// holdOff is how long the notifier waits, with the agent idle and its
+// channel unconfirmed, for the channel's first push before it types (FR59).
+const holdOff = 10 * time.Second
+
+// holdState is what the loop remembers about the channel hold-off.
+type holdState struct {
+	// seq is the newest batch already held off: it is held at most once.
+	seq int64
+	// said is the newest batch whose skip was reported.
+	said int64
+	// recheck is when a skipped push goes unconfirmed (120 s after it);
+	// zero when nothing is skipped.
+	recheck time.Time
+}
+
+// channelPushed says whether the channel has already pushed the batch up to
+// seq, and until when that holds. Two signs count, each for 120 s only, so a
+// push that leads to no ack never holds a batch back forever: the agent's
+// turn record shows a channel turn for seq that is still running (when one
+// covers the batch it decides alone), or, with no such turn yet, the
+// channel's record names a push of seq or later. The deadline is when the
+// sign runs out; the loop wakes for it.
+func channelPushed(c Config, seq int64) (bool, time.Time) {
+	if c.ContextDir == "" {
+		return false, time.Time{}
+	}
+	now := c.now()
+	turn, tok := ctxwatch.LoadTurn(c.ContextDir, c.Binding.Session)
+	if tok && turn.ChannelSeq > 0 && turn.ChannelSeq >= seq {
+		// A channel turn covers the batch: it alone decides. The record's
+		// push was answered by that turn, so its own window must not keep
+		// the batch skipped after the turn has ended.
+		if at, err := time.Parse(time.RFC3339Nano, turn.ChannelAt); err == nil {
+			deadline := at.Add(ctxwatch.ChannelConfirmWithin)
+			if now.Before(deadline) && !at.After(now.Add(time.Minute)) && !ctxwatch.Idle(turn, tok, now) {
+				return true, deadline
+			}
+			return false, time.Time{}
+		}
+	}
+	st, ok, err := ctxwatch.LoadChannelState(c.ContextDir, c.Binding.Session)
+	if err != nil || !ok || st.LastPushSeq < seq {
+		return false, time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339Nano, st.LastPushAt)
+	if err != nil {
+		return false, time.Time{}
+	}
+	if deadline := at.Add(ctxwatch.ChannelConfirmWithin); now.Before(deadline) && !at.After(now.Add(time.Minute)) {
+		return true, deadline
+	}
+	return false, time.Time{}
+}
+
+// heldOff decides, just before a non-json adapter would type the batch of
+// seq, whether the channel has it (FR59). A channel that is unconfirmed
+// ("no push confirmed yet") and an idle agent: the notifier's typed line
+// would start the turn first and the channel, which pushes only to an idle
+// agent, would never get to confirm. So it waits holdOff, once per batch,
+// and skips the batch if the channel pushed meanwhile; otherwise it types.
+// A batch skipped for a push is typed when that push is 120 s old and the
+// channel has not become active.
+func heldOff(ctx context.Context, c Config, seq int64, h *holdState) (bool, error) {
+	h.recheck = time.Time{}
+	if h.seq != seq && c.ContextDir != "" {
+		st, ok, err := ctxwatch.LoadChannelState(c.ContextDir, c.Binding.Session)
+		turn, tok := ctxwatch.LoadTurn(c.ContextDir, c.Binding.Session)
+		if err == nil && ok && ctxwatch.ChannelMayHoldOff(st, c.now()) && ctxwatch.Idle(turn, tok, c.now()) {
+			h.seq = seq
+			if pushed, _ := channelPushed(c, seq); !pushed {
+				if err := c.Wait(ctx, holdOff); err != nil {
+					return false, err
+				}
+			}
+		}
+	}
+	if h.seq != seq {
+		return false, nil
+	}
+	pushed, deadline := channelPushed(c, seq)
+	h.recheck = deadline
+	return pushed, nil
+}
+
+func once(ctx context.Context, c Config, path string, f *checkpointFile, state *checkpoint, skipped *int64, hold *holdState) error {
+	hold.recheck = time.Time{}
 	b := c.Binding
 	if state.Scope.valid() {
 		b.Workspace = state.Scope.WorkspaceID
@@ -264,6 +364,22 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 			return Permanent(errors.New("diagnostic output failed"))
 		}
 		return nil
+	}
+	if c.Binding.Adapter != "json" {
+		skip, err := heldOff(ctx, c, s.LatestSequence, hold)
+		if err != nil {
+			return err
+		}
+		if skip {
+			if hold.said == s.LatestSequence {
+				return nil
+			}
+			hold.said = s.LatestSequence
+			if err = json.NewEncoder(c.Diagnostics).Encode(map[string]any{"source": "notifier", "data": map[string]any{"type": "hint_skipped", "reason": "channel_push", "event_id": e.EventID, "session_id": e.SessionID}}); err != nil {
+				return Permanent(errors.New("diagnostic output failed"))
+			}
+			return nil
+		}
 	}
 	switch c.Binding.Adapter {
 	case "command":

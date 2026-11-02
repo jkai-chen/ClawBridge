@@ -82,6 +82,13 @@
   new claim reaches the dispatcher within about a minute. The watcher logs one line per tick so an idle watcher is
   visibly healthy. No schema change. Linear config scope: none.
 
+## Dispatcher
+
+- **Model mode reads trust from each domain match.** The dispatcher agent's prompt now says trust comes only from
+  `domain_matches[].trusted`, and the case it receives may carry an optional `trusted` on each match (sent by servers
+  from 1.0.1). The agent no longer infers trust from a session's principal. No schema change. Linear config scope:
+  none.
+
 ## Docs
 
 - **Intake's `needs-agent` label.** docs/linear.md now says to use the team's own `needs-agent` label or a workspace

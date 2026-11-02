@@ -45,7 +45,7 @@ func channelRun(t *testing.T, args ...string) (string, string, error) {
 }
 
 func allowText(path string) string {
-	return "The admin step that lets Claude Code take ClawBridge's channel on this machine (FR26).\n" +
+	return "The admin step that lets Claude Code take ClawBridge's channel on this machine.\n" +
 		"Drop-in: " + path + "\n\n" + channel.AllowJSON + "\n" +
 		"Warnings:\n" +
 		"- It is machine-wide: it applies to every Claude Code user on this machine.\n" +
@@ -268,7 +268,7 @@ func TestMCPInstallChannel(t *testing.T) {
 	if strings.Count(string(settings), marker) != 4 || !strings.Contains(string(settings), turn) || strings.Contains(string(plainSettings), turn) {
 		t.Fatalf("%s\n%s", settings, plainSettings)
 	}
-	want := "Channel setup still to do (FR26):\n" +
+	want := "Channel setup still to do:\n" +
 		"  claude plugin marketplace add jkai-chen/ClawBridge\n" +
 		"  claude plugin install clawbridge@clawbridge --scope user\n" +
 		"  the admin step, once per machine: clawbridge channel allow\n" +
@@ -284,7 +284,7 @@ func TestMCPInstallChannel(t *testing.T) {
 	}
 	before, _ := os.ReadFile(filepath.Join(config, "settings.json"))
 	_, errs, err = install("chan", "--channel")
-	if err != nil || !strings.HasSuffix(errs, "Channel setup (FR26): the plugin is installed and enabled, and this machine allowlists it.\n"+
+	if err != nil || !strings.HasSuffix(errs, "Channel setup: the plugin is installed and enabled, and this machine allowlists it.\n"+
 		"Then start the agent with:\n  CLAWBRIDGE_SESSION=agent CLAWBRIDGE_INSTANCE=inst-1 claude --channels plugin:clawbridge@clawbridge\n") {
 		t.Fatalf("%v %q", err, errs)
 	}

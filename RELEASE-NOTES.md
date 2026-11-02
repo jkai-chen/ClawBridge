@@ -14,6 +14,11 @@
   and `CLAWBRIDGE_APP_WEBHOOK_PROVEN` (`serve --app-webhook-proven`) are recognised and checked at start, and a bad
   secret refuses the start without showing it. No route reads them, so setting them changes nothing. No schema change.
   Linear config scope: none.
+- **`clawbridge cloud secret set` also sets the Linear app webhook secret.**
+  `CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET` (one secret, or two comma-separated during a rotation) is checked the way the
+  server checks it and refused before anything is sent, without showing it; that it differs from every team webhook
+  secret is checked when the server starts. The setting is still reserved and does nothing yet. Help text no longer
+  shows internal request numbers. No schema change. Linear config scope: none.
 
 ## Linear
 

@@ -20,7 +20,7 @@ import (
 
 const channelUsage = `usage:
   clawbridge channel serve
-      The channel server a ClawBridge Claude Code plugin starts (FR26): an
+      The channel server a ClawBridge Claude Code plugin starts: an
       MCP server on stdin and stdout that wakes the idle agent of
       CLAWBRIDGE_SESSION when its messages wait. It pushes only a fixed
       notice and a count; the agent reads its mail with the inbox tool.
@@ -110,7 +110,7 @@ func runChannelAllow(args []string, stdout io.Writer) error {
 	}
 	root := channelManagedDir()
 	path := filepath.Join(root, "managed-settings.d", channel.AllowFileName)
-	fmt.Fprintf(stdout, "The admin step that lets Claude Code take ClawBridge's channel on this machine (FR26).\nDrop-in: %s\n\n%s\n", path, channel.AllowJSON)
+	fmt.Fprintf(stdout, "The admin step that lets Claude Code take ClawBridge's channel on this machine.\nDrop-in: %s\n\n%s\n", path, channel.AllowJSON)
 	fmt.Fprintf(stdout, "Warnings:\n"+
 		"- It is machine-wide: it applies to every Claude Code user on this machine.\n"+
 		"- allowedChannelPlugins replaces Anthropic's default channel list when no other managed list exists, so it also lists Anthropic's four official channel plugins (discord, telegram, fakechat, imessage).\n"+
@@ -183,9 +183,9 @@ func writeChannelSteps(w io.Writer, project, session, instance string) {
 	missing := channelMissing(project)
 	allowed, _, allowErr := channel.AllowlistedIn(channelManagedDir())
 	if len(missing) == 0 && allowed {
-		fmt.Fprintln(w, "Channel setup (FR26): the plugin is installed and enabled, and this machine allowlists it.")
+		fmt.Fprintln(w, "Channel setup: the plugin is installed and enabled, and this machine allowlists it.")
 	} else {
-		fmt.Fprintln(w, "Channel setup still to do (FR26):")
+		fmt.Fprintln(w, "Channel setup still to do:")
 		for _, m := range missing {
 			fmt.Fprintln(w, "  claude "+strings.Join(m, " "))
 		}

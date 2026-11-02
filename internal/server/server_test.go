@@ -396,3 +396,32 @@ func TestServeProjectPlanProven(t *testing.T) {
 		}
 	}
 }
+
+// FR55: milestone plans are proven by the flag or 1 or true in the
+// environment, off by default (any other value is off too, without failing start), and independent
+// of the project plan.
+func TestServeMilestonePlanProven(t *testing.T) {
+	base := []string{"--bootstrap-owner", "owner@example.test", "--auth", "device", "--public-origin", "https://cb.example.test"}
+	for name, c := range map[string]struct {
+		flag bool
+		env  string
+		want bool
+		err  bool
+	}{
+		"default": {}, "flag": {flag: true, want: true}, "env": {env: "1", want: true}, "env true": {env: "true", want: true}, "env empty": {env: ""}, "env off": {env: "0"}, "env false": {env: "false"}, "env space": {env: " 1"}, "env yes": {env: "yes"}, "env garbage": {env: "garbage"},
+	} {
+		args := append([]string{}, base...)
+		if c.flag {
+			args = append(args, "--milestone-plan-proven")
+		}
+		settings, err := ParseServe(args, func(k string) string {
+			if k == "CLAWBRIDGE_MILESTONE_PLAN_PROVEN" {
+				return c.env
+			}
+			return ""
+		})
+		if (err != nil) != c.err || err == nil && (settings.MilestonePlanProven != c.want || settings.ProjectPlanProven) {
+			t.Errorf("%s: %v %v", name, settings.MilestonePlanProven, err)
+		}
+	}
+}

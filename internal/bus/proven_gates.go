@@ -13,7 +13,7 @@ import "fmt"
 // ProvenGateNames are the gates in the order doctor and the TUI show them.
 // A gate the server reads must be named here (server test
 // TestEveryProvenGateIsShown).
-var ProvenGateNames = []string{"project_flow", "issue_subscribers", "issue_move", "issue_family_move", "project_team_add", "project_status_domain", "project_plan", "webhooks"}
+var ProvenGateNames = []string{"project_flow", "issue_subscribers", "issue_move", "issue_family_move", "project_team_add", "project_status_domain", "project_plan", "milestone_plan", "webhooks"}
 
 // provenGates lists every gate with whether it is on.
 func (s *Store) provenGates() []map[string]any {
@@ -25,6 +25,7 @@ func (s *Store) provenGates() []map[string]any {
 		"project_team_add":      s.projectTeamAddProven,
 		"project_status_domain": s.projectStatusDomainProven,
 		"project_plan":          s.projectPlanProven,
+		"milestone_plan":        s.milestonePlanProven,
 		"webhooks":              s.webhooksProven,
 	}
 	gates := make([]map[string]any, 0, len(ProvenGateNames))

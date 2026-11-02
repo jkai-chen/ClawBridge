@@ -22,7 +22,7 @@ func planReserveRequest(ctx context.Context, writer *AppWriter, r bus.Request) b
 	if r.Operation == "project_team_add_reserve" {
 		return teamAddReserveRequest(ctx, writer, r)
 	}
-	if r.Operation != "project_plan_reserve" {
+	if r.Operation != "project_plan_reserve" && r.Operation != "milestone_plan_reserve" {
 		return r
 	}
 	args := map[string]any{}

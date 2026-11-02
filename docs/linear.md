@@ -1846,18 +1846,28 @@ Agents use `taskboard_project_plan_v2` (`priority` an integer or a name;
 
 ### Milestones
 
-A Linear project's milestones group its issues under target dates. This
-release reads them and puts an issue in one; people create and change milestones
-in Linear for now, and doing so from ClawBridge comes in a later release.
+A Linear project's milestones group its issues under target dates. ClawBridge
+reads them, puts an issue in one, and creates and updates a project's
+milestones (the name and the target date) with a preview and a confirm.
+Deleting a milestone, its description, its order and moving it to another
+project stay in Linear.
 
 ```sh
 clawbridge linear milestone list PROJECT_UUID --profile PROFILE_ID [--json]
 clawbridge linear create ... --milestone MILESTONE_UUID
 clawbridge linear update ISSUE --milestone MILESTONE_UUID
+clawbridge linear milestone create PROJECT_UUID --name NAME [--target-date YYYY-MM-DD] \
+  --operation-id ID --profile PROFILE_ID
+clawbridge linear milestone update MILESTONE_UUID --linear-project PROJECT_UUID [--name NAME] \
+  [--target-date YYYY-MM-DD | --clear-target-date] --operation-id ID --profile PROFILE_ID
+clawbridge linear milestone create|update ... --confirm --expected-plan-sha256 SHA
 ```
 
-Agents use `taskboard_milestones_v2 {project}`, and the `milestone` field of
-`taskboard_create_v2` and `taskboard_update_v2`.
+Agents use `taskboard_milestones_v2 {project}`, the `milestone` field of
+`taskboard_create_v2` and `taskboard_update_v2`, and
+`taskboard_milestone_plan_v2 {project, milestone?, name?, target_date?,
+operation_id, confirm, expected_plan_sha256?}` (no `milestone` creates one;
+`target_date: null` clears the date).
 
 - **The list.** `--profile` is required, as for the other `linear` reads; without
   it the command is refused ("select --profile with the opaque ID from linear
@@ -1898,7 +1908,95 @@ Agents use `taskboard_milestones_v2 {project}`, and the `milestone` field of
   after a live check of how Linear clears one. A connection that can't set a
   milestone is refused too: "this Linear connection can't set a milestone;
   nothing was sent".
-- Linear config scope: none (issue data). No schema change.
+- Linear config scope for an issue's milestone: none (issue data). No schema
+  change.
+
+#### Creating and updating a project's milestones
+
+`milestone create` and `milestone update` work like a project's priority and dates (above), with a
+milestone as the subject: a preview, then a confirm, through the confirming
+person's own Linear profile, never the ClawBridge app. `update` takes the
+Linear project with `--linear-project` (required; the global `--project`
+still selects the ClawBridge project) because Linear's save needs the project,
+and ClawBridge checks the milestone is in it by listing the project's milestones.
+
+- **Only the fields given are sent.** A create sends the project and the name,
+  and the target date if given; an update sends the project, the milestone's ID
+  (a UUID, never a name) and the changed fields. A description is never sent.
+  `--clear-target-date` (`target_date: null`) sends a null.
+- **The checks, before anything is sent.** The binding is a project set and the
+  project one of its projects, by UUID. For an update the project's milestones
+  are listed and must hold the milestone (`milestone_not_in_project`).
+  A name is 1 to 80 characters after trimming, with no control character, no
+  bidirectional control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F,
+  U+061C) and no zero-width character (U+200B to U+200D, U+2060, U+FEFF). No
+  other milestone of the project may have the name once case is folded and the
+  text is normalized (NFC): "Beta" and "beta" are one, and so are a composed and
+  a decomposed é. A create that repeats a name, and a rename to another
+  milestone's name, are refused. Dates are real `YYYY-MM-DD` dates from 2000 to
+  2100. A Linear connection whose milestone save can't take the fields is
+  refused: "this Linear connection can't create or update milestones; nothing
+  was sent".
+- **A date after the project's own is flagged, not refused.** If the milestone's
+  target date (the planned one, else its current one) is later than the
+  project's target date, the preview says so under `flags`. Linear allows it and
+  it is a planning choice.
+- **Who confirms.** Anyone may preview; creating and updating are the same
+  right. The server decides from its own records, as for a
+  [project's priority and dates](#setting-a-projects-priority-and-dates): the
+  project owner, a project lead, or a team's lead in the team roles, each in
+  their own terminal (`owner`, `project_lead`, `team_lead`); the project's
+  coordinator session inside its lane (`coordinator`); a session owned by a
+  team's lead inside a lane that holds that team (`team_lead_session`). In a
+  binding without lanes no session confirms (`outside_lane`). While the
+  dispatcher is on, a domain's coordinator session also confirms, inside its
+  lane, for a project whose teams are **all** write teams of its lane as the
+  server's own app read shows them (a partial or empty read is refused), and
+  only after the operator's `--project-status-domain-proven`, as for a project
+  plan. Role, pin and lane are read again at
+  the confirm. Everyone else gets the preview with `ask`, and asks the project
+  owner or a lead.
+- **Preview, then confirm.** The preview shows each field's current and planned
+  value (names are shown terminal-safe), who confirms, what is sent, the flags
+  and `plan_sha256`, a digest of the project, its teams and target date, the
+  planned and current values and the project's milestones (their IDs with their
+  names' hashes). Nothing is recorded or sent. The confirm repeats the command
+  with `--confirm` and that digest; if the milestones changed since, it is
+  refused: "the project's milestones changed since the preview; preview again".
+- **The record comes first.** Before anything is sent the server reserves the
+  plan in the Linear writes ledger (`linear writes`), kind `milestone_plan`,
+  with the operation, the field names and, for a confirm, who. No name and no
+  date is stored. A create's reservation is keyed on the project and a SHA-256
+  of the name folded and normalized, so two creates of one name serialise: while
+  one is unsettled, or uncertain and not yet acknowledged, another operation's
+  create of that name is refused (`conflict`). The milestones are read back
+  (again after 2 s and 4 s if a field isn't there yet) before it is settled:
+  - `accepted`: every field reads back as sent. A create is found by the ID
+    Linear's save returned; if it returned none, by its name among the
+    milestones that were not there at the preview (the digest binds that no
+    namesake existed);
+  - `accepted_with_changes`: the fields are set and another of the milestone's
+    fields changed (`changed` names them: `name`, `targetDate`, `sortOrder`);
+    ClawBridge never undoes it;
+  - `not_sent`: Linear refused the save and the milestones read as before;
+  - `uncertain`: a field doesn't read back as sent, the milestones couldn't be
+    read, or a create can't be told from another (none found, or more than one
+    new milestone of that name). It is never sent again and stays open in
+    `linear writes`: read the project's milestones in Linear and tell the owner.
+- **Counted and acknowledged.** The overview (`milestone_plans`) and doctor's
+  `linear.milestone_plans` count the plans that came back with other fields
+  changed until each is acknowledged with `linear writes --ack OP_ID`, by the
+  same people as a project plan: the owner any; a project lead and a team's lead
+  their own (a team's lead also those their own sessions confirmed); a session
+  never.
+- **Off until proven.** A server refuses every confirm
+  (`milestone_plan_unproven`) until its operator sets
+  `serve --milestone-plan-proven` (or `CLAWBRIDGE_MILESTONE_PLAN_PROVEN` set to `1` or `true`) after
+  the live sitting. The preview always works. Doctor's `linear.proven_gates`
+  lists `milestone_plan`.
+- History records IDs and field names only: the project, the milestone, the
+  operation, who, the lane and the fields. Never a name or a date.
+- Linear config scope: project. No schema change.
 
 ## Team roles (project owner, and leads for their teams)
 

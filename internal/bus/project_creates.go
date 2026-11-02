@@ -292,8 +292,8 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 		return nil, scoped("a Linear write is acknowledged only from a person's own signed-in device", "forbidden")
 	}
 	op := str(r.Args, "operation_id")
-	open := `project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind IN (?,?) AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`
-	found, err := query(ctx, tx, `SELECT * FROM linear_write_reservations WHERE `+open, pid, op, projectTeamAddKind, projectPlanKind, `%"changed":[%`)
+	open := `project_id=? AND operation_id=? AND (state IN ('reserved','uncertain') OR (kind IN (?,?,?) AND state='accepted' AND detail LIKE ?)) AND acknowledged_at IS NULL`
+	found, err := query(ctx, tx, `SELECT * FROM linear_write_reservations WHERE `+open, pid, op, projectTeamAddKind, projectPlanKind, milestonePlanKind, `%"changed":[%`)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +327,7 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 			if child == "" {
 				continue
 			}
-			c, err := query(ctx, tx, `SELECT operation_id FROM linear_write_reservations WHERE `+open+` AND kind=?`, pid, childOperation(op, child), projectTeamAddKind, projectPlanKind, `%"changed":[%`, issueMoveChildKind)
+			c, err := query(ctx, tx, `SELECT operation_id FROM linear_write_reservations WHERE `+open+` AND kind=?`, pid, childOperation(op, child), projectTeamAddKind, projectPlanKind, milestonePlanKind, `%"changed":[%`, issueMoveChildKind)
 			if err != nil {
 				return nil, err
 			}
@@ -352,6 +352,10 @@ func (s *Store) ackProjectCreate(ctx context.Context, tx *transaction, wid, pid,
 	return view, nil
 }
 
+// planKind reports whether kind is one of the plan writes (FR13 project
+// plans, FR55 milestone plans) whose confirmers acknowledge their own rows.
+func planKind(kind string) bool { return kind == projectPlanKind || kind == milestonePlanKind }
+
 // ownAck reports whether a caller who isn't the owner may acknowledge row
 // as its confirmer: a project lead their own lead (or FR13 project_lead)
 // row, and a team's lead their own project plan.
@@ -363,9 +367,9 @@ func ownAck(row map[string]any, projectRole, who string) bool {
 	case "lead":
 		return projectRole == "lead"
 	case "project_lead":
-		return projectRole == "lead" && str(row, "kind") == projectPlanKind
+		return projectRole == "lead" && planKind(str(row, "kind"))
 	case "team_lead", "team_lead_session":
-		return str(row, "kind") == projectPlanKind
+		return planKind(str(row, "kind"))
 	}
 	return false
 }

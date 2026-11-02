@@ -104,6 +104,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"linear.status_policy":         {},
 	"linear.cancel_kinds":          {},
 	"linear.project_plans":         {},
+	"linear.milestone_plans":       {},
 	"linear.teams_without_project": {},
 	"linear.proven_gates":          {},
 	"linear.budget":                {},

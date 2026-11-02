@@ -455,7 +455,7 @@ clawbridge --session lead --instance lead-1 project coordinator-set lead
 
 The coordinator seat is more than a label. Besides confirming assignments, it also lets
 that session create Linear projects, set project status, priority and dates, and add
-teams within its lane, and move issues between its lane's teams (see [A coordinator creates projects](linear.md#a-coordinator-creates-projects)).
+teams within its lane, move issues between its lane's teams, and create and update a project's milestones (off until the operator sets `CLAWBRIDGE_MILESTONE_PLAN_PROVEN=1`) (see [A coordinator creates projects](linear.md#a-coordinator-creates-projects)).
 Designate only a session whose person you would trust with those.
 
 `clawbridge project overview` then shows the project at a glance: its sessions,

@@ -31,9 +31,13 @@ func UpdatedAfterTime(value string) (time.Time, bool) {
 }
 
 // IntakeText says whether an issue's title or description changed since the
-// trusted signal that queued it.
+// trusted signal that queued it. Maybe: the flag only says the issue
+// changed after the signal and Linear's history could not show it was
+// another field, so check the history; TextChangedSinceSignal is true for
+// it too.
 type IntakeText struct {
 	TextChangedSinceSignal bool   `json:"text_changed_since_signal"`
+	Maybe                  bool   `json:"maybe"`
 	SignalAt               string `json:"signal_at,omitempty"`
 }
 

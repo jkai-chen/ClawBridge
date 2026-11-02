@@ -548,8 +548,19 @@ flags:`)
 		case "dismiss ", "rearm ":
 			op = "intake_" + sub
 			arityMin, arityMax = 1, 1
-			if sub == "rearm " {
+			if sub == "rearm" {
 				f.Bool("confirm", false, "vouch for the issue's title and description as shown, without asking")
+				f.Usage = func() {
+					fmt.Fprintln(f.Output(), `usage: clawbridge intake rearm ISSUE_UUID [--confirm]
+  Reopens an issue for intake, and vouches for its text if you confirm.
+  Run it from your own terminal: it shows the issue's title and the first 500
+  characters of its description, then asks "Vouch for it? [y/N]". Answering y
+  vouches for that text as it is now. --confirm skips the question. With
+  --session, or when an agent runs the command, it never vouches (it still
+  reopens the issue).
+flags:`)
+					f.PrintDefaults()
+				}
 			}
 		default:
 			return usage

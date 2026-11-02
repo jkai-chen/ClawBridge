@@ -900,6 +900,7 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 		actor, trusted, via = credit.Actor, true, credit.Principal
 	}
 	ev := intakeEvent(signal, issue, actor, trusted, at, via)
+	ev.TextClean = r.textUnchanged(ctx, ev)
 	result, err := r.w.Store.IntakeEnqueueSystem(ctx, r.pid, ev)
 	switch {
 	case err != nil:
@@ -911,6 +912,77 @@ func (r *intakeRun) candidate(ctx context.Context, signal, issueID string, match
 		r.skipped(signal, name, result, "")
 	}
 	return true
+}
+
+// textUnchanged is FR58's history check, the one place intake asks it: for
+// a trusted signal whose issue was updated more than IntakeSkew after the
+// transition, it reads the issue's history and reports whether that proves
+// neither the title nor the description changed since. It is asked of every
+// event, so queueing, the re-queue of a closed row, a re-vouch and a cap
+// raise (all decided by bus.eventVouchesText from ev.TextClean) share it.
+// It proves nothing, and the skew rule's maybe flag or refused re-vouch
+// stands, unless ALL of these hold:
+//   - the walk is complete: every entry in (At, updatedAt+IntakeSkew] was
+//     read, down to an entry at or before At or the history's end, within
+//     historyPages pages;
+//   - no entry in that window is a title change or a description update;
+//   - every entry in it is a known kind: one with Other set is not;
+//   - the last update is explained: an entry in the window is no older than
+//     updatedAt-IntakeSkew. Linear's history can trail an edit, so an
+//     update with no such entry may be the edit whose entry is not there
+//     yet.
+//
+// Every page read is counted in the pass's charge, and a read after the
+// project's share has run out is not made.
+func (r *intakeRun) textUnchanged(ctx context.Context, ev bus.IntakeEvent) bool {
+	if !ev.Trusted || ev.Actor == "" || ev.Issue.TitleSHA256 == "" {
+		return false
+	}
+	at, e1 := time.Parse(time.RFC3339Nano, ev.At)
+	updated, e2 := time.Parse(time.RFC3339Nano, ev.Issue.UpdatedAt)
+	if e1 != nil || e2 != nil || !updated.After(at.Add(bus.IntakeSkew)) {
+		// Within the skew the bus vouches without a read; unparsable
+		// times prove nothing.
+		return false
+	}
+	explained, after := false, ""
+	for page := 0; page < historyPages; page++ {
+		if deferred(ctx) {
+			return false
+		}
+		r.poll.Calls++
+		p, err := linearapp.ReadIssueHistory(ctx, r.w.App.GraphQL, ev.Issue.UUID, linearapp.HistoryMaxLimit, after)
+		if err != nil || !p.Scope.Found {
+			return false
+		}
+		for _, n := range p.Entries("", nil) {
+			t, err := time.Parse(time.RFC3339Nano, n.At)
+			if err != nil {
+				return false
+			}
+			if !t.After(at) {
+				// Newest first: the rest is older than the transition.
+				return explained
+			}
+			if t.After(updated.Add(bus.IntakeSkew)) {
+				// A later change than this read; the periodic text check
+				// judges it against the stored text.
+				continue
+			}
+			if n.TitleChanged || n.DescriptionUpdated || n.Other {
+				return false
+			}
+			if !t.Before(updated.Add(-bus.IntakeSkew)) {
+				explained = true
+			}
+		}
+		if !p.HasNextPage {
+			return explained
+		}
+		after = p.EndCursor
+	}
+	// The walk stopped before the transition: nothing is proven.
+	return false
 }
 
 // intakeEvent is the queue event for an issue: hashes of its text, never

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -129,5 +130,28 @@ func TestCLIIntakeTrustByNameOrEmail(t *testing.T) {
 	before := lookups
 	if out, _, err := run("intake", "trust", "add", other); err != nil || !strings.Contains(out, other) || lookups != before {
 		t.Fatal(out, err, lookups)
+	}
+}
+
+// intake rearm --help lists --confirm and says what the vouch is.
+func TestIntakeRearmHelpListsConfirmAndTheVouch(t *testing.T) {
+	isolated(t)
+	for _, flagName := range []string{"--help", "-h"} {
+		var out, errOut bytes.Buffer
+		_ = Run(context.Background(), []string{"intake", "rearm", flagName}, &out, &errOut)
+		help := out.String() + errOut.String()
+		for _, want := range []string{"-confirm", "first 500", `"Vouch for it? [y/N]"`, "--confirm skips the question", "never vouches"} {
+			if !strings.Contains(help, want) {
+				t.Fatalf("%s: help lacks %q:\n%s", flagName, want, help)
+			}
+		}
+	}
+}
+
+// The prompt the help quotes is the one the command asks.
+func TestIntakeRearmHelpQuotesTheRealPrompt(t *testing.T) {
+	src, err := os.ReadFile("intake_rearm.go")
+	if err != nil || !strings.Contains(string(src), `"Vouch for it? [y/N] "`) {
+		t.Fatal("the prompt changed; update the help", err)
 	}
 }

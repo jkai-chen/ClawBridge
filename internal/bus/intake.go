@@ -388,6 +388,11 @@ type IntakeEvent struct {
 	// made the signal, when intake credited it to Actor by its
 	// attribution; empty when Linear's history named Actor itself.
 	Via string
+	// TextClean is set by the server's intake pass, never by a client, when
+	// Linear's issue history proved that neither the title nor the
+	// description changed between At and the update the issue was read at
+	// (FR58). It stands for the skew check where the update is later.
+	TextClean bool
 }
 
 // triggerCap is the furthest an event may take its issue (§1.1): a trusted,

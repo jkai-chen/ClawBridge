@@ -46,7 +46,7 @@ func (h *textHarness) check(title, description string) map[string]any {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	return map[string]any{"tracked": st.Tracked, "changed": st.Changed, "signal_at": st.SignalAt}
+	return map[string]any{"tracked": st.Tracked, "changed": st.Changed, "maybe": st.Maybe, "signal_at": st.SignalAt}
 }
 
 // status is what a client's issue read gets: the stored verdict.
@@ -372,7 +372,7 @@ func TestIntakeRequeueBeyondTheSkewIsQueuedFlagged(t *testing.T) {
 		t.Fatal(got)
 	}
 	maybe := h.maybeNotices()
-	if h.reason() != "text_changed" || h.status()["changed"] != true || h.followUps() != 0 || len(maybe) != 1 || h.notices() != 2 {
+	if h.reason() != "text_maybe" || h.status()["changed"] != true || h.followUps() != 0 || len(maybe) != 1 || h.notices() != 2 {
 		t.Fatal(h.reason(), h.followUps(), maybe, h.notices())
 	}
 	// The wording is the hedged one, with parsed times, and no hash.
@@ -585,7 +585,7 @@ func TestIntakeQueueingFlagWithNoCoordinatorIsToldHedgedLater(t *testing.T) {
 		}
 	}
 	maybe := h.maybeNotices()
-	if h.reason() != "text_changed" || len(maybe) != 1 || h.followUps() != 0 || !strings.Contains(maybe[0], "(signal at unknown, issue updated at 2026-10-23T12:05:00Z)") || h.notices() != 1 {
+	if h.reason() != "text_maybe" || len(maybe) != 1 || h.followUps() != 0 || !strings.Contains(maybe[0], "(signal at unknown, issue updated at 2026-10-23T12:05:00Z)") || h.notices() != 1 {
 		t.Fatal(h.reason(), maybe, h.notices())
 	}
 }

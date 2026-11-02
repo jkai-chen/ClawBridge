@@ -46,6 +46,8 @@ func TestHistoryQueriesAreTypedReads(t *testing.T) {
 		if len(q) > 8192 || mutationWord.MatchString(q) || !strings.HasPrefix(q, "query ") {
 			t.Fatal("not a read-only query:", q)
 		}
+		// The three FR58 fields only say a change happened; they carry no text.
+		q = strings.NewReplacer("fromTitle", "", "toTitle", "", "updatedDescription", "").Replace(q)
 		for _, banned := range []string{"email", "title", "Title", "description", "Description", "body", "comments"} {
 			if strings.Contains(q, banned) {
 				t.Fatalf("query reads %q: %s", banned, q)
@@ -255,5 +257,36 @@ func TestHistoryOutsideSideShape(t *testing.T) {
 	var back HistoryChange[HistoryNamed]
 	if err := json.Unmarshal(got, &back); err != nil || *back.From != (HistoryNamed{ID: "p1", Name: "Launch"}) || *back.To != (HistoryNamed{Outside: true}) {
 		t.Fatal(back, err)
+	}
+}
+
+// The intake check (FR58) reads a title change and a description update
+// from the history: a title changed when the sides differ, a description
+// when Linear says so. A title-only entry is still other to a client.
+func TestHistoryDecodesTextChanges(t *testing.T) {
+	nodes := strings.Join([]string{
+		`{"createdAt":"2026-10-30T10:00:03Z","actorId":"` + hAda + `","fromTitle":"a","toTitle":"b"}`,
+		`{"createdAt":"2026-10-30T10:00:02Z","actorId":"` + hAda + `","fromTitle":"a","toTitle":"a"}`,
+		`{"createdAt":"2026-10-30T10:00:01Z","actorId":"` + hAda + `","updatedDescription":true}`,
+		`{"createdAt":"2026-10-30T10:00:00Z","actorId":"` + hAda + `","updatedDescription":false,"fromTitle":null,"toTitle":null}`,
+	}, ",")
+	f := &fakeGraphQL{data: historyData(nodes, false, "")}
+	page, err := ReadIssueHistory(context.Background(), f.run, hIssue, 20, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := page.Entries(hApp, nil)
+	got := [][2]bool{}
+	for _, e := range entries {
+		got = append(got, [2]bool{e.TitleChanged, e.DescriptionUpdated})
+		if !e.Other {
+			t.Fatal("a text-only entry is not other to a client:", e)
+		}
+	}
+	if !reflect.DeepEqual(got, [][2]bool{{true, false}, {false, false}, {false, true}, {false, false}}) {
+		t.Fatal(got)
+	}
+	if raw, _ := json.Marshal(entries[0]); strings.Contains(string(raw), "itle") || strings.Contains(string(raw), "escription") {
+		t.Fatal("the client shape grew:", string(raw))
 	}
 }

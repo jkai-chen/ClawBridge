@@ -2898,9 +2898,12 @@ so add the label once the issue exists.
   read (`clawbridge linear issue`, the MCP issue read) only shows the server's stored verdict, as
   `intake.text_changed_since_signal` with the `signal_at` time. If either hash differs, the coordinator is told
   once. A flag set when the signal is queued (the issue's last update was more than five seconds after it) means
-  only "changed after the signal, maybe not the text; check the issue history", and its notice says so.
-  `intake list` shows reason `text_changed`, or `text_changed_unsent` / `text_maybe_unsent` while there was no
-  coordinator to tell; the notice then goes out, with the original one if it was never sent, when a coordinator
+  only "changed after the signal, maybe not the text; check the issue history", and its notice says so. It is set
+  only when Linear's history can't show that the change was to another field: the intake pass reads the history
+  (counted in the project's Linear budget) and, when it shows only other changes (priority, labels, state,
+  assignee) since the signal, holds the text as vouched. The issue read shows `intake.maybe: true` for a maybe flag.
+  `intake list` shows reason `text_changed` (a confirmed change) or `text_maybe` (a maybe flag), or
+  `text_changed_unsent` / `text_maybe_unsent` while there was no coordinator to tell; the notice then goes out, with the original one if it was never sent, when a coordinator
   exists. The new
   text is not vouched for until the person adds the label again or delegates the issue again within moments of
   the change they saw (a mention does not count, and an edit made more than five seconds after the label or

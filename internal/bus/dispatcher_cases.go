@@ -291,7 +291,8 @@ func trimTo(s string, n int) string {
 }
 
 // dispatcherEscalate tells a person: the domain's coordinator session when
-// active, else another active session of the domain's owner, else the
+// active, else another active session of the domain's owner (while that person is
+// still the project's owner or a lead), else the
 // project owner's and leads' active sessions; with none, the escalation is
 // stored undelivered for dispatcher escalations. Each is also a decision of
 // kind escalation. It carries a structured payload (its kind, a fixed
@@ -368,7 +369,8 @@ func escalationBody(proposal map[string]any, reason, domainID string) string {
 
 // dispatcherChain is who hears a dispatcher escalation or a routed notice,
 // in order (§8): the domain's coordinator session (by ID, active and fresh),
-// else another active session of the domain's owner, else the project
+// else another active session of the domain's owner (while that person is
+// still the project's owner or a lead), else the project
 // owner's and leads' active sessions. exclude leaves out one session (the
 // claimant). Empty means nobody is online: the caller stores it.
 func (s *Store) dispatcherChain(ctx context.Context, tx *transaction, w map[string]any, pid string, dom *DispatcherDomain, exclude string) ([]map[string]any, error) {
@@ -393,8 +395,16 @@ func (s *Store) dispatcherChain(ctx context.Context, tx *transaction, w map[stri
 		}
 	}
 	if len(to) == 0 && dom != nil {
-		if to, err = activeSessions("owner_principal=? AND id<>?", dom.OwnerPrincipal, exclude); err != nil {
-			return nil, err
+		// A domain owner demoted since (to member or reader, or removed)
+		// no longer hears escalations: only an owner or a lead does.
+		role, rerr := s.principalRole(ctx, tx, w, pid, dom.OwnerPrincipal)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if role == "owner" || role == "lead" {
+			if to, err = activeSessions("owner_principal=? AND id<>?", dom.OwnerPrincipal, exclude); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if len(to) == 0 {

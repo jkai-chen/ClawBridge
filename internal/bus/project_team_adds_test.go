@@ -276,9 +276,12 @@ func TestProjectTeamAddTeamRolesLead(t *testing.T) {
 	h, _ := teamAddsHarness(t)
 	me := h.principal()
 	const leadUser = "d1000000-0000-4000-8000-0000000000d1"
-	mapping := func(linked string, team string) {
+	mapping := func(linked string, teams ...string) {
 		h.t.Helper()
-		m := TeamRoles{Teams: []TeamRoleTeam{{TeamID: team, Leads: []string{leadUser}}}, People: []TeamRolePerson{{LinearUserID: leadUser, Role: "lead", Teams: []string{team}, Principal: linked}}}
+		m := TeamRoles{People: []TeamRolePerson{{LinearUserID: leadUser, Role: "lead", Teams: teams, Principal: linked}}}
+		for _, team := range teams {
+			m.Teams = append(m.Teams, TeamRoleTeam{TeamID: team, Leads: []string{leadUser}})
+		}
 		raw, _ := json.Marshal(m)
 		if _, e := h.s.db.Exec(`DELETE FROM team_role_mapping`); e != nil {
 			t.Fatal(e)
@@ -287,29 +290,106 @@ func TestProjectTeamAddTeamRolesLead(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	adder := func() (string, error) {
+	// held is the server's read of the project's teams.
+	adder := func(held ...any) (string, error) {
 		tx, pid := ledgerTx(t, h)
 		defer tx.Rollback()
 		b, _, err := storedBinding(context.Background(), tx, pid)
 		if err != nil {
 			t.Fatal(err)
 		}
-		by, _, err := h.s.projectTeamAdder(context.Background(), tx, pid, "member", nil, b, teamTwo, []string{teamOne})
+		by, _, err := h.s.projectTeamAdder(context.Background(), tx, pid, "member", nil, map[string]any{"server_project_teams": held}, b, teamTwo, []string{teamOne})
+		return by, err
+	}
+	partial := func() (string, error) {
+		tx, pid := ledgerTx(t, h)
+		defer tx.Rollback()
+		b, _, _ := storedBinding(context.Background(), tx, pid)
+		by, _, err := h.s.projectTeamAdder(context.Background(), tx, pid, "member", nil, map[string]any{"server_project_teams": []any{teamOne}, "server_project_teams_more": true}, b, teamTwo, []string{teamOne})
+		return by, err
+	}
+	const refusal = "team_lead: you can add your team only to a project that already holds a team you lead; ask the project owner or a project lead"
+	noRead := func() (string, error) {
+		tx, pid := ledgerTx(t, h)
+		defer tx.Rollback()
+		b, _, _ := storedBinding(context.Background(), tx, pid)
+		by, _, err := h.s.projectTeamAdder(context.Background(), tx, pid, "member", nil, map[string]any{}, b, teamTwo, []string{teamOne})
 		return by, err
 	}
 	if _, err := adder(); err == nil || !strings.Contains(err.Error(), "team's own lead") {
 		t.Fatal("a member with no roles:", err)
 	}
-	mapping(me, teamTwo)
-	if by, err := adder(); err != nil || by != "team_lead" {
+	// The lead of two teams adds one to a project holding the other (and a
+	// third team); the lead of only the added team has no held team.
+	mapping(me, teamOne, teamTwo)
+	if by, err := adder(teamOne, unboundTeam); err != nil || by != "team_lead" {
 		t.Fatal(by, err)
 	}
+	mapping(me, teamTwo)
+	if _, err := adder(teamOne, unboundTeam); err == nil || !strings.Contains(err.Error(), refusal) {
+		t.Fatal("a lead of only the added team added it to a project holding only others' teams:", err)
+	}
+	mapping(me, teamOne, teamTwo)
+	for name, f := range map[string]func() (string, error){
+		"project holds none of theirs": func() (string, error) { return adder(unboundTeam) },
+		"empty read":                   func() (string, error) { return adder() },
+		"partial read":                 partial,
+		"no server read":               noRead,
+	} {
+		if _, err := f(); err == nil || !strings.Contains(err.Error(), refusal) {
+			t.Fatal(name, ":", err)
+		}
+	}
 	mapping(me, teamOne)
-	if _, err := adder(); err == nil {
+	if _, err := adder(teamOne); err == nil {
 		t.Fatal("the lead of another team added this one")
 	}
 	mapping("", teamTwo)
-	if _, err := adder(); err == nil {
+	if _, err := adder(teamOne); err == nil {
 		t.Fatal("an unlinked lead row granted the add")
+	}
+}
+
+// On a hosted server the coordinator's "project holds a lane team" check
+// uses only the server's own read: with it, in lane is ok, out of lane is
+// refused, and a missing, empty or partial read is refused. A local store
+// keeps the client's list (TestProjectTeamAddCoordinatorLane).
+func TestProjectTeamAddCoordinatorUsesTheServersRead(t *testing.T) {
+	h, _ := teamAddsHarness(t)
+	h.pin("lane_pin_set", map[string]any{"expected_revision": 0, "kind": "session", "key": "c", "lane": "one"})
+	tx, pid := ledgerTx(t, h)
+	defer tx.Rollback()
+	ctx := context.Background()
+	b, _, err := storedBinding(ctx, tx, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, err := one(ctx, tx, `SELECT * FROM sessions WHERE name='c' AND project_id=?`, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Lane "one" writes teamOne only; the client says the project holds
+	// teamOne, so only a hosted store can tell it otherwise.
+	h.s.postgres = true
+	defer func() { h.s.postgres = false }()
+	try := func(extra map[string]any) error {
+		_, _, err := h.s.projectTeamAdder(ctx, tx, pid, "member", actor, extra, b, teamOne, []string{teamOne})
+		return err
+	}
+	const unread = "the server could not read the project's teams; try again"
+	if err := try(map[string]any{"server_project_teams": []any{teamOne, teamTwo}}); err != nil {
+		t.Fatal("the server's read holds a lane team:", err)
+	}
+	if err := try(map[string]any{"server_project_teams": []any{teamTwo}}); err == nil || !strings.Contains(err.Error(), "outside_lane: the project holds no write team of lane one") {
+		t.Fatal("the server's read holds none:", err)
+	}
+	for name, a := range map[string]map[string]any{
+		"missing": {},
+		"empty":   {"server_project_teams": []any{}},
+		"partial": {"server_project_teams": []any{teamOne}, "server_project_teams_more": true},
+	} {
+		if err := try(a); err == nil || !strings.Contains(err.Error(), unread) {
+			t.Fatal(name, "read:", err)
+		}
 	}
 }

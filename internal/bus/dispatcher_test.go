@@ -242,3 +242,40 @@ func TestDispatcherSchemaColumns(t *testing.T) {
 		rows.Close()
 	}
 }
+
+// A domain owner who is no longer the project's owner or a lead (a
+// demoted lead, or a principal the project no longer knows) drops out of
+// the escalation chain: their active session isn't told, and the project
+// owner's is. The workspace owner as a domain owner still is.
+func TestDispatcherChainSkipsADemotedDomainOwner(t *testing.T) {
+	h := dispatcherHarness(t)
+	const demoted = "demoted@example.test"
+	b, owner := h.sessionID("b"), h.principal()
+	if _, err := h.s.db.Exec(`UPDATE sessions SET owner_principal=? WHERE id=?`, demoted, b); err != nil {
+		t.Fatal(err)
+	}
+	tx, pid := ledgerTx(t, h)
+	w, err := one(context.Background(), tx, `SELECT * FROM workspaces LIMIT 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := func(owner string) []string {
+		t.Helper()
+		to, err := h.s.dispatcherChain(context.Background(), tx, w, pid, &DispatcherDomain{OwnerPrincipal: owner}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range to {
+			out = append(out, str(r, "id"))
+		}
+		return out
+	}
+	got := ids(demoted)
+	if len(got) == 0 || strings.Contains(strings.Join(got, ","), b) {
+		t.Fatal("a demoted domain owner's session was told, or nobody was:", got)
+	}
+	if got = ids(owner); len(got) == 0 || strings.Contains(strings.Join(got, ","), b) {
+		t.Fatal("the owner's chain:", got)
+	}
+}

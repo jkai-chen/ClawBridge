@@ -1,3 +1,34 @@
+# Unreleased
+
+## Permissions
+
+- **A team's lead adds their team only to a project that already holds a team they lead.** Until now a lead in the
+  team roles could add their team to any project of the binding. The server now also needs the project to hold a team
+  that person leads, judged from its own read of the project's teams: a read it could not complete in full refuses the
+  add. The refusal says to ask the project owner or a project lead. A coordinator session's add also uses the server's
+  read on a hosted server ("the server could not read the project's teams; try again" when it fails). The project
+  owner and project leads are unchanged. No schema change. Linear config scope: none.
+- **The role `system` is reserved.** `register` and `update` refuse it (any case) so a person's session can't pose as
+  the watcher or the dispatcher. Sessions that already hold it are left alone. No schema change. Linear config scope:
+  none.
+- **A project lead can change who closes through `status-policy set`, as `closes set` already allowed.** The lead runs
+  it without a session, and the file may change only `closes` and `agent_may_cancel_kinds`; every other field stays
+  the owner's. A session still can never change who closes, and letting agents close still needs the typed project
+  name. No schema change. Linear config scope: none.
+- **Only the workspace owner grants the project role `owner`.** `project role set EMAIL owner` from a project owner
+  who is not the workspace owner is refused, the same rule as an invite (a project owner grants up to `lead`). No
+  schema change. Linear config scope: none.
+- **A reader can't be linked as an intake voucher.** `intake trust add` with `--principal`, or a trustee whose email
+  matches a project member's, needs that person to hold at least the member role. Links already stored are left alone.
+  No schema change. Linear config scope: none.
+- **A demoted domain owner no longer hears dispatcher escalations.** A domain's owner who is no longer the project's
+  owner or a lead is skipped when an escalation looks for someone to tell; the next person in the chain is told. No
+  schema change. Linear config scope: none.
+- **The coordinator seat's help text is accurate.** `project coordinator-set` said the seat grants no other rights.
+  Designating a session also lets it create Linear projects, set project status, priority and dates, add teams within
+  its lane, and move issues between its lane's teams; the usage text and docs now say so. No schema change. Linear
+  config scope: none.
+
 # ClawBridge v1.0.1 (released 3 Nov)
 
 **ClawBridge 1.0.1** is a fixes release on 1.0.0. Intake holds an issue's title and description to what the trusted

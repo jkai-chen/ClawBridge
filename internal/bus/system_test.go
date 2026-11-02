@@ -199,3 +199,32 @@ func TestWatchProjectsRotateByLastTick(t *testing.T) {
 		t.Fatal("the rotation did not move on:", got)
 	}
 }
+
+// The role value 'system' is reserved: register and update refuse it in
+// any case or padding, other roles still work, and the watcher and the
+// dispatcher still create their own sessions.
+func TestSystemRoleValueIsReserved(t *testing.T) {
+	h := newHarness(t)
+	for _, role := range []string{"system", " System ", "SYSTEM"} {
+		if e := h.errorOf("register_session", "fresh", map[string]any{"instance": "i-fresh", "role": role}); !strings.Contains(e, "the role 'system' is reserved") {
+			t.Fatal("register accepted", role, ":", e)
+		}
+		if e := h.errorOf("update_session", "a", map[string]any{"role": role}); !strings.Contains(e, "the role 'system' is reserved") {
+			t.Fatal("update accepted", role, ":", e)
+		}
+	}
+	h.call("register_session", "fresh", map[string]any{"instance": "i-fresh", "role": "reviewer"})
+	h.call("update_session", "a", map[string]any{"role": "engineer"})
+	var pid string
+	if e := h.s.db.QueryRow(`SELECT project_id FROM sessions WHERE id=?`, h.sessionID("a")).Scan(&pid); e != nil {
+		t.Fatal(e)
+	}
+	if _, err := h.s.ExecuteSystem(context.Background(), pid, Request{Operation: "taskboard_get_v2"}); err != nil {
+		t.Fatal(err)
+	}
+	h.dispatcherSessions(pid)
+	var n int
+	if e := h.s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE role='system' AND project_id=?`, pid).Scan(&n); e != nil || n < 2 {
+		t.Fatal("the watcher and dispatcher sessions weren't created:", n, e)
+	}
+}

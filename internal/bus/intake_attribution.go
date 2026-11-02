@@ -178,18 +178,34 @@ func projectMember(ctx context.Context, tx *transaction, pid, p string) (bool, e
 	return len(rows) > 0, nil
 }
 
-// trustLink is the principal a trust add links (Q2): --principal, which
-// must be a project member, or else link_email when it is an email that
-// exactly matches one (either case). "" when nothing links.
+// projectContributor is projectMember for a role of at least member: a
+// reader can't vouch for a Linear account. A local workspace has its owner
+// alone.
+func projectContributor(ctx context.Context, tx *transaction, pid, p string) (bool, error) {
+	q, args := `SELECT 1 FROM projects pr JOIN workspaces w ON w.id=pr.workspace_id WHERE pr.id=? AND w.owner_principal=?`, []any{pid, p}
+	if tx.postgres {
+		q, args = q+` UNION ALL SELECT 1 FROM project_roles WHERE project_id=? AND principal=? AND role IN ('owner','lead','member')`, append(args, pid, p)
+	}
+	rows, err := query(ctx, tx, q, args...)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) > 0, nil
+}
+
+// trustLink is the principal a new trust add links (Q2): --principal, which
+// must hold at least the member role, or else link_email when it is an
+// email that exactly matches one (either case). "" when nothing links.
+// Links already stored are left alone, and credit still asks projectMember.
 func trustLink(ctx context.Context, tx *transaction, pid string, a map[string]any) (string, error) {
 	if explicit := str(a, "principal"); explicit != "" {
 		p := normalPrincipal(explicit)
-		member, err := projectMember(ctx, tx, pid, p)
+		member, err := projectContributor(ctx, tx, pid, p)
 		if err != nil {
 			return "", err
 		}
 		if !member {
-			return "", invalid("--principal must be a member of this ClawBridge project")
+			return "", invalid("--principal must be a member of this ClawBridge project with at least the member role (a reader can't be linked)")
 		}
 		return p, nil
 	}
@@ -201,7 +217,7 @@ func trustLink(ctx context.Context, tx *transaction, pid string, a map[string]an
 	if !validPrincipal(p) || !strings.EqualFold(strings.TrimSpace(email), p) {
 		return "", nil
 	}
-	member, err := projectMember(ctx, tx, pid, p)
+	member, err := projectContributor(ctx, tx, pid, p)
 	if err != nil || !member {
 		return "", err
 	}

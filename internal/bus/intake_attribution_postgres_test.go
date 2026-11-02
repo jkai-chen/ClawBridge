@@ -54,3 +54,35 @@ func TestPostgresIntakeTrustLinksByEmail(t *testing.T) {
 		t.Fatal("a revoked member was credited:", c)
 	}
 }
+
+// A new trust link needs a project role of at least member: a reader is
+// refused by --principal and not linked by an email. A member still is.
+func TestPostgresIntakeTrustLinkNeedsAtLeastMember(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	reader := newID("r") + "@identity-test.example"
+	member := newID("m") + "@identity-test.example"
+	f.member(member)
+	f.member(reader)
+	f.must(f.owner, "sub-owner", Request{Operation: "project_role_set", Workspace: f.workspace, Project: "p", Args: map[string]any{"principal": reader, "role": "reader"}})
+	var pid string
+	if err := f.s.db.QueryRowContext(context.Background(), `SELECT p.id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.name=$1 AND p.slug='p'`, f.workspace).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.ExecContext(context.Background(), `INSERT INTO taskboard_bindings(project_id,revision,mapping,updated_at) VALUES($1,1,'{}','2026-01-01T00:00:00Z')`, pid); err != nil {
+		t.Fatal(err)
+	}
+	add := func(a map[string]any) ([]map[string]any, error) {
+		out, err := f.as(f.owner, "sub-owner", Request{Operation: "intake_trust_add", Workspace: f.workspace, Project: "p", Args: a})
+		list, _ := out.Data.([]map[string]any)
+		return list, err
+	}
+	if _, err := add(map[string]any{"linear_user_id": trustedUser, "principal": reader}); err == nil || !strings.Contains(err.Error(), "at least the member role") {
+		t.Fatal("a reader was linked by --principal:", err)
+	}
+	if list, err := add(map[string]any{"linear_user_id": trustedUser, "link_email": reader}); err != nil || list[0]["principal"] != nil {
+		t.Fatal("a reader was linked by email:", list, err)
+	}
+	if list, err := add(map[string]any{"linear_user_id": trustedUser, "principal": member}); err != nil || list[0]["principal"] != member {
+		t.Fatal("a member wasn't linked:", list, err)
+	}
+}

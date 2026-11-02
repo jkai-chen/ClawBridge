@@ -21,12 +21,25 @@ func metadata(a map[string]any) error {
 	}
 	return nil
 }
+
+// reservedRole refuses the system role value, which only the internal
+// watcher and dispatcher sessions hold. Those are created by their own
+// inserts (system.go, dispatcher.go), never through register or update.
+func reservedRole(a map[string]any) error {
+	if v, ok := a["role"].(string); ok && strings.EqualFold(strings.TrimSpace(v), systemRole) {
+		return invalid("the role 'system' is reserved")
+	}
+	return nil
+}
 func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, r Request) (any, error) {
 	if err := sessionNameOK(r.Session); err != nil {
 		return nil, err
 	}
 	a := r.Args
 	if err := metadata(a); err != nil {
+		return nil, err
+	}
+	if err := reservedRole(a); err != nil {
 		return nil, err
 	}
 	rows, err := query(ctx, tx, `SELECT * FROM sessions WHERE project_id=? AND name=?`, pid, r.Session)
@@ -105,6 +118,9 @@ func (s *Store) register(ctx context.Context, tx *transaction, wid, pid string, 
 }
 func (s *Store) update(ctx context.Context, tx *transaction, wid, pid string, actor map[string]any, a map[string]any) (any, error) {
 	if err := metadata(a); err != nil {
+		return nil, err
+	}
+	if err := reservedRole(a); err != nil {
 		return nil, err
 	}
 	sid := actor["id"].(string)

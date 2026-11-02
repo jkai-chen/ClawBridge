@@ -19,6 +19,9 @@ const projectTeamsQuery = `query ProjectTeams($id: String!) { project(id: $id) {
 // Without an app, or when the read fails, none are set, and the bus refuses
 // a domain coordinator's confirm.
 func planReserveRequest(ctx context.Context, writer *AppWriter, r bus.Request) bus.Request {
+	if r.Operation == "project_team_add_reserve" {
+		return teamAddReserveRequest(ctx, writer, r)
+	}
 	if r.Operation != "project_plan_reserve" {
 		return r
 	}
@@ -75,4 +78,34 @@ func (w *AppWriter) projectTeams(ctx context.Context, lp string) ([]string, bool
 		}
 	}
 	return teams, out.Project.Teams.PageInfo.HasNextPage, nil
+}
+
+// teamAddReserveRequest is a team add reserve as the bus takes it: the
+// project's teams a team-roles lead is checked against
+// (server_project_teams, server_project_teams_more) are only ever the
+// server's own read. A client's are dropped; without an app, or when the
+// read fails, none are set, and the bus refuses a team lead's add. The
+// client's own project_teams stay as they are (the plan's, not a proof).
+func teamAddReserveRequest(ctx context.Context, writer *AppWriter, r bus.Request) bus.Request {
+	args := map[string]any{}
+	for k, v := range r.Args {
+		if k != "server_project_teams" && k != "server_project_teams_more" {
+			args[k] = v
+		}
+	}
+	r.Args = args
+	lp, _ := args["linear_project"].(string)
+	if writer == nil || (writer.App == nil && writer.PlanTeams == nil) || !linearprovider.ValidID(lp) {
+		return r
+	}
+	read := writer.projectTeams
+	if writer.PlanTeams != nil {
+		read = writer.PlanTeams
+	}
+	teams, more, err := read(ctx, strings.ToLower(lp))
+	if err != nil {
+		return r
+	}
+	args["server_project_teams"], args["server_project_teams_more"] = teams, more
+	return r
 }

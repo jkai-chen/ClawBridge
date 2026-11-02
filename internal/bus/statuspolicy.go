@@ -171,6 +171,15 @@ func ParseStatusPolicy(v any) (StatusPolicy, error) {
 	return p, nil
 }
 
+// onlyClosesAndCancelKinds reports whether next differs from current in
+// nothing but closes and agent_may_cancel_kinds.
+func onlyClosesAndCancelKinds(current, next StatusPolicy) bool {
+	next.Closes, next.AgentMayCancelKinds = current.Closes, current.AgentMayCancelKinds
+	a, _ := json.Marshal(current)
+	b, _ := json.Marshal(next)
+	return string(a) == string(b)
+}
+
 // cancelKindNames are kind names as a policy keeps them: trimmed, each
 // once whatever its case (the first spelling stays), at most the kind
 // setting's cap, and none for an empty list.
@@ -195,13 +204,18 @@ func cancelKindNames(names []string) ([]string, error) {
 
 func statusPolicyOperation(op string) bool { return op == "status_policy_set" }
 
-// statusPolicyOp sets the policy: the project owner only, without a session
-// (the CLI) or from an active one. Reading it (status_policy_get) is open
+// statusPolicyOp sets the policy: the project owner, without a session
+// (the CLI) or from an active one. A project-role lead may, without a
+// session, change only closes and agent_may_cancel_kinds, as status_closes_set
+// and status_cancel_kinds_set let them; every other field is the owner's. Reading it (status_policy_get) is open
 // to every member and handled before sessions.
 func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[string]any, projectRole string, actor map[string]any, r Request) (any, error) {
 	wid, pid := w["id"].(string), p["id"].(string)
-	if projectRole != "owner" {
+	if projectRole != "owner" && projectRole != "lead" {
 		return nil, errors.New("project owner permission required")
+	}
+	if projectRole == "lead" && actor != nil {
+		return nil, errors.New("project owner permission required: a lead sets closes and cancel kinds without a session")
 	}
 	if actor != nil && actor["status"] != "active" {
 		return nil, errors.New("session is retired or moved; it cannot perform this operation")
@@ -220,6 +234,9 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	policy, err := ParseStatusPolicy(r.Args["status_policy"])
 	if err != nil {
 		return nil, err
+	}
+	if projectRole == "lead" && !onlyClosesAndCancelKinds(stored, policy) {
+		return nil, errors.New("project owner permission required: a lead changes only closes and agent_may_cancel_kinds here")
 	}
 	via := str(r.Args, "via")
 	if via != "" && !closesVia[via] {

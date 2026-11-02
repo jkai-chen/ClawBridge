@@ -169,7 +169,13 @@ func ParsePublicKey(s string) (ed25519.PublicKey, error) {
 // query), the timestamp and nonce as written in the header, and the body's
 // SHA-256.
 func RequestBase(method, origin, target, ts, nonce string, body []byte) []byte {
-	sum := sha256.Sum256(body)
+	return RequestBaseSum(method, origin, target, ts, nonce, sha256.Sum256(body))
+}
+
+// RequestBaseSum is RequestBase for a caller that holds the body's SHA-256
+// rather than the body, as the key agent does. RequestBase is defined by it,
+// so the two are one string.
+func RequestBaseSum(method, origin, target, ts, nonce string, sum [sha256.Size]byte) []byte {
 	return []byte("clawbridge-request-v1\n" + method + "\n" + origin + "\n" + target + "\n" + ts + "\n" + nonce + "\n" + hex.EncodeToString(sum[:]))
 }
 

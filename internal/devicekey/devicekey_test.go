@@ -3,6 +3,7 @@ package devicekey
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"strings"
 	"testing"
 )
@@ -112,5 +113,14 @@ func TestNewCodeRedrawsWeakDraw(t *testing.T) {
 	code := newCodeFrom(r)
 	if !StrongCode(code) || r.Len() != 0 || strings.Contains(code, "0000") {
 		t.Fatal("not redrawn:", code, r.Len())
+	}
+}
+
+func TestRequestBaseSumIsRequestBase(t *testing.T) {
+	body := []byte(`{"x":1}`)
+	a := RequestBase("POST", "https://hub.example.test", "/v1/x?y=1", "1700000000", "nonce", body)
+	b := RequestBaseSum("POST", "https://hub.example.test", "/v1/x?y=1", "1700000000", "nonce", sha256.Sum256(body))
+	if string(a) != string(b) {
+		t.Fatalf("%q != %q", a, b)
 	}
 }

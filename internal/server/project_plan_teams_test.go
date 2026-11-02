@@ -46,7 +46,7 @@ func TestPlanReserveTeamsAreTheServersRead(t *testing.T) {
 	if got = planReserveRequest(context.Background(), nil, req("c", true)); got.Args["project_teams"] != nil {
 		t.Fatal("a server without an app kept the client's teams:", got.Args)
 	}
-	other := bus.Request{Operation: "project_team_add_reserve", Args: map[string]any{"project_teams": []string{"x"}}}
+	other := bus.Request{Operation: "project_status_claim", Args: map[string]any{"project_teams": []string{"x"}}}
 	if got = planReserveRequest(context.Background(), writer, other); got.Args["project_teams"] == nil {
 		t.Fatal("another operation's args were touched")
 	}
@@ -81,5 +81,24 @@ func TestThePlanReserveRouteSetsTheServersTeams(t *testing.T) {
 	}
 	if got := post(false); got["project_teams"] != nil {
 		t.Fatal("a preview carried the client's teams:", got)
+	}
+}
+
+// A team add's held-team proof is the server's own read: a client's forged
+// server_project_teams are dropped, the client's project_teams stay, and a
+// failed or missing read leaves none.
+func TestTeamAddReserveTeamsAreTheServersRead(t *testing.T) {
+	writer := &AppWriter{PlanTeams: func(context.Context, string) ([]string, bool, error) { return []string{"t1"}, true, nil }}
+	req := bus.Request{Operation: "project_team_add_reserve", Args: map[string]any{"linear_project": planTeamsProject, "project_teams": []string{"client"}, "server_project_teams": []string{"forged"}, "server_project_teams_more": false}}
+	got := planReserveRequest(context.Background(), writer, req)
+	if !reflect.DeepEqual(got.Args["server_project_teams"], []string{"t1"}) || got.Args["server_project_teams_more"] != true || !reflect.DeepEqual(got.Args["project_teams"], []string{"client"}) {
+		t.Fatal(got.Args)
+	}
+	writer.PlanTeams = func(context.Context, string) ([]string, bool, error) { return nil, false, errors.New("unreadable") }
+	if got = planReserveRequest(context.Background(), writer, req); got.Args["server_project_teams"] != nil || got.Args["server_project_teams_more"] != nil {
+		t.Fatal("a failed read left the forged teams:", got.Args)
+	}
+	if got = planReserveRequest(context.Background(), nil, req); got.Args["server_project_teams"] != nil {
+		t.Fatal("a server without an app kept the forged teams:", got.Args)
 	}
 }

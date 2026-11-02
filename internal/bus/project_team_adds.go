@@ -69,7 +69,7 @@ func (s *Store) projectTeamAddOp(ctx context.Context, tx *transaction, wid, pid,
 // coordinator when team is a write team of its lane and the project's
 // current teams include one too (R2: a coordinator never pulls another
 // lane's project into its own).
-func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, projectRole string, actor map[string]any, b TaskboardBindingV2, team string, current []string) (string, string, error) {
+func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, projectRole string, actor, a map[string]any, b TaskboardBindingV2, team string, current []string) (string, string, error) {
 	if actor == nil {
 		if projectRole == "owner" || projectRole == "lead" {
 			return projectRole, "", nil
@@ -82,7 +82,19 @@ func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, proj
 		if err != nil {
 			return "", "", err
 		}
-		if slices.Contains(ledTeams(roles, s.principal, b.LinearTeamIDs), team) {
+		led := ledTeams(roles, s.principal, b.LinearTeamIDs)
+		if slices.Contains(led, team) {
+			// The project must already hold a team this person leads. The
+			// project's teams here are only the server's own read of Linear
+			// (server_project_teams): the client's list is its own word. A
+			// missing, empty or partial read fails closed.
+			held, herr := uuidList(a, "server_project_teams")
+			if herr != nil {
+				return "", "", herr
+			}
+			if more, _ := a["server_project_teams_more"].(bool); more || len(held) == 0 || !slices.ContainsFunc(held, func(t string) bool { return slices.Contains(led, t) }) {
+				return "", "", scoped("team_lead: you can add your team only to a project that already holds a team you lead; ask the project owner or a project lead", "forbidden")
+			}
 			return "team_lead", "", nil
 		}
 		return "", "", scoped("only the project owner, a lead, or the team's own lead in the team roles adds a team to a Linear project, from their own terminal; preview it and ask them", "forbidden")
@@ -108,6 +120,19 @@ func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, proj
 	if !slices.Contains(l.WriteTeamIDs, team) {
 		return "", "", scoped(fmt.Sprintf("outside_lane: team %s isn't a write team of lane %s; a coordinator adds only its lane's teams", team, l.Name), "forbidden")
 	}
+	// On a hosted server the project's teams are only the server's own read
+	// (server_project_teams); a missing, empty or partial one fails closed. A
+	// local store has no app read, so the client's list stands.
+	if s.postgres {
+		held, herr := uuidList(a, "server_project_teams")
+		if herr != nil {
+			return "", "", herr
+		}
+		if more, _ := a["server_project_teams_more"].(bool); more || len(held) == 0 {
+			return "", "", scoped("the server could not read the project's teams; try again", "forbidden")
+		}
+		current = held
+	}
 	if !slices.ContainsFunc(current, func(t string) bool { return slices.Contains(l.WriteTeamIDs, t) }) {
 		return "", "", scoped(fmt.Sprintf("outside_lane: the project holds no write team of lane %s; the project owner or a lead adds a team to another lane's project", l.Name), "forbidden")
 	}
@@ -117,7 +142,8 @@ func (s *Store) projectTeamAdder(ctx context.Context, tx *transaction, pid, proj
 // reserveProjectTeamAdd records a confirmed add before any Linear call.
 // project_teams is the client's own read of the project's teams, so it is
 // policy, not proof: the server decides who may add which team to which
-// project of the binding, and the write itself goes through the confirming
+// project of the binding (a team lead's held-team check uses the server's
+// own read, server_project_teams), and the write itself goes through the confirming
 // person's own Linear profile, whose access Linear checks.
 func (s *Store) reserveProjectTeamAdd(ctx context.Context, tx *transaction, wid, pid, projectRole string, actor, a map[string]any, op string, now time.Time) (any, error) {
 	if !s.projectTeamAddProven {
@@ -158,7 +184,7 @@ func (s *Store) reserveProjectTeamAdd(ctx context.Context, tx *transaction, wid,
 	if b.TeamAccess(team) != TeamAccessWrite {
 		return nil, scoped(fmt.Sprintf("team %s isn't a write team of this binding", team), "forbidden")
 	}
-	by, lane, err := s.projectTeamAdder(ctx, tx, pid, projectRole, actor, b, team, current)
+	by, lane, err := s.projectTeamAdder(ctx, tx, pid, projectRole, actor, a, b, team, current)
 	if err != nil {
 		return nil, err
 	}

@@ -1538,8 +1538,9 @@ The project's designated coordinator session (`project coordinator-set`; while
 the dispatcher is on, a domain's coordinator session) may
 run `project create` too, in its own terminal and through its person's own
 Linear profile, never the ClawBridge app. Linear's own permissions still
-apply. Every other admin write stays the project owner's, and nothing in
-ClawBridge archives or deletes a project.
+apply. The same seat also sets a project's status, priority and dates and adds
+teams within its lane, and moves issues between its lane's teams (each has its own section); every other admin write stays
+the project owner's, and nothing in ClawBridge archives or deletes a project.
 
 ```sh
 clawbridge --session COORD --instance INSTANCE linear project create NAME \
@@ -1658,12 +1659,17 @@ clawbridge linear project team-adds                 # any member: the adds, and 
   - the added team's own lead in the [team roles](#team-roles-project-owner-and-leads-for-their-teams):
     a lead row of that team the owner linked to their ClawBridge account, in
     their own terminal without a session, while Linear states them an active,
-    non-guest user (checked before anything is reserved);
+    non-guest user (checked before anything is reserved). The project must
+    already hold a team that person leads: the server checks it against its own
+    read of the project's teams, so a lead of one team can't pull their team
+    into a project they have no part in (the project owner or a lead does that).
+    A read the server couldn't complete in full refuses the add;
   - the project's designated coordinator session, only for a write team of its
     own lane, and only to a project that already holds one of its lane's teams.
     Otherwise the add is `outside_lane`, because it would pull another lane's
     project into this one. In a binding without lanes, the coordinator adds no
-    team.
+    team. On a hosted server the project's teams are the server's own read; if it
+    couldn't read them in full, the add is refused ("try again").
   - while the dispatcher is on, a domain's coordinator session
     ([above](#while-the-dispatcher-is-on)), on the same terms.
 
@@ -2215,7 +2221,9 @@ the policy still names but the board no longer binds "(not bound)"; the next
   the check has to claim it, and the audit records the claim.
 - **Never a session.** The server refuses `closes set` from any session,
   whoever its owner is, and refuses a `status-policy set` from a session that
-  changes who closes. The rest of the status policy stays the owner's.
+  changes who closes. A project lead may run `status-policy set` without a session
+  when the file changes nothing but `closes` and `agent_may_cancel_kinds`, the
+  same as `closes set`; the rest of the status policy stays the owner's.
 - **A file that names agent close rules isn't an agent's to run.** The CLI
   refuses `status-policy set` under `--session` or an agent's environment when
   the file's `"closes"` names any project `agent`, changed or not, before

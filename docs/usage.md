@@ -453,6 +453,11 @@ clawbridge --session eng --instance eng-1 register --role engineer
 clawbridge --session lead --instance lead-1 project coordinator-set lead
 ```
 
+The coordinator seat is more than a label. Besides confirming assignments, it also lets
+that session create Linear projects, set project status, priority and dates, and add
+teams within its lane, and move issues between its lane's teams (see [A coordinator creates projects](linear.md#a-coordinator-creates-projects)).
+Designate only a session whose person you would trust with those.
+
 `clawbridge project overview` then shows the project at a glance: its sessions,
 which one is the coordinator, each one's assignment, and the Linear board's
 teams and projects ([API reference](reference/api.md#project-overview)).

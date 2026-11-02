@@ -17,7 +17,7 @@ func (s *Store) projectRole(ctx context.Context, tx *transaction, w map[string]a
 	}
 	return row["role"].(string), nil
 }
-func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid string, a map[string]any) (any, error) {
+func (s *Store) setProjectRole(ctx context.Context, tx *transaction, w map[string]any, wid, pid string, a map[string]any) (any, error) {
 	principal, role := normalPrincipal(str(a, "principal")), str(a, "role")
 	if !validPrincipal(principal) {
 		return nil, errors.New("principal must be an email")
@@ -26,6 +26,11 @@ func (s *Store) setProjectRole(ctx context.Context, tx *transaction, wid, pid st
 	case "owner", "lead", "member", "reader":
 	default:
 		return nil, errors.New("role must be owner, lead, member or reader")
+	}
+	// The invite rule (D1): only the workspace owner grants owner; a project
+	// owner grants up to lead.
+	if role == "owner" && !mainOwner(s, w) {
+		return nil, refused("a project owner may grant up to lead; only the workspace owner grants owner")
 	}
 	now := stamp()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO members(workspace_id,principal,added_by,added_at) VALUES(?,?,?,?) ON CONFLICT(workspace_id,principal) DO NOTHING`, wid, principal, s.principal, now); err != nil {

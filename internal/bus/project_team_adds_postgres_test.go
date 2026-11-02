@@ -60,10 +60,10 @@ func TestPostgresProjectTeamAdds(t *testing.T) {
 		t.Fatal(got)
 	}
 	// R3: a member the owner linked to a lead row of the added team reserves
-	// it as team_lead; the reader, though linked, is still refused.
+	// it as team_lead (the project holding the other team they lead); the reader, though linked, is still refused.
 	const leadUser = "d1000000-0000-4000-8000-0000000000d1"
 	for _, who := range []string{"member", "reader"} {
-		m := TeamRoles{Teams: []TeamRoleTeam{{TeamID: teamTwo, Leads: []string{leadUser}}}, People: []TeamRolePerson{{LinearUserID: leadUser, Role: "lead", Teams: []string{teamTwo}, Principal: people[who]}}}
+		m := TeamRoles{Teams: []TeamRoleTeam{{TeamID: teamOne, Leads: []string{leadUser}}, {TeamID: teamTwo, Leads: []string{leadUser}}}, People: []TeamRolePerson{{LinearUserID: leadUser, Role: "lead", Teams: []string{teamOne, teamTwo}, Principal: people[who]}}}
 		raw, _ := json.Marshal(m)
 		if _, err := f.s.db.Exec(`DELETE FROM team_role_mapping`); err != nil {
 			t.Fatal(err)
@@ -71,7 +71,9 @@ func TestPostgresProjectTeamAdds(t *testing.T) {
 		if _, err := f.s.db.Exec(`INSERT INTO team_role_mapping(project_id,revision,mapping,updated_by,updated_at) SELECT id,1,$1,$2,$3 FROM projects WHERE slug='p'`, string(raw), f.owner, "2026-10-29T00:00:00Z"); err != nil {
 			t.Fatal(err)
 		}
-		got, err := as(who, Request{Operation: "project_team_add_reserve", Args: teamAddArgs("t-lead-"+who, teamTwo, teamOne)})
+		args := teamAddArgs("t-lead-"+who, teamTwo, teamOne)
+		args["server_project_teams"] = []string{teamOne}
+		got, err := as(who, Request{Operation: "project_team_add_reserve", Args: args})
 		data, _ := got.Data.(map[string]any)
 		if who == "member" && (err != nil || data["by"] != "team_lead") || who == "reader" && err == nil {
 			t.Fatal(who, data, err)

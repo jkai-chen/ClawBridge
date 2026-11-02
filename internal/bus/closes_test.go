@@ -240,3 +240,77 @@ func TestStatusPolicySetGuardsWhoCloses(t *testing.T) {
 		t.Fatal("tightening asked for a terminal:", err)
 	}
 }
+
+// policyAs runs status_policy_set as a project role, with or without an
+// acting session (the role itself is the harness owner's; this is the only
+// way to put a lead in front of the check).
+func (h *harness) policyAs(role string, actor map[string]any, a map[string]any) (any, error) {
+	h.t.Helper()
+	ctx := context.Background()
+	tx, err := h.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer tx.Rollback()
+	t := &transaction{Tx: tx}
+	w, err := one(ctx, t, `SELECT id FROM workspaces LIMIT 1`)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	p, err := one(ctx, t, `SELECT id,workspace_id FROM projects WHERE slug='p'`)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	out, err := h.s.statusPolicyOp(ctx, t, w, p, role, actor, Request{Operation: "status_policy_set", Args: a})
+	if err == nil {
+		err = tx.Commit()
+	}
+	return out, err
+}
+
+// Closes are the owner's or a project-role lead's on both paths: a lead's
+// status_policy_set may change closes and agent_may_cancel_kinds, nothing
+// else, and never from a session; a member may not.
+func TestStatusPolicyLeadChangesOnlyCloses(t *testing.T) {
+	h := newHarness(t)
+	h.link(0, []string{cpOne})
+	h.call("project_kind_set", "", kindSet(0, "", "", "Engineering", "Research"))
+	h.call("status_policy_set", "", map[string]any{"expected_revision": 0, "status_policy": sfPolicy(true)})
+	withCloses := sfPolicy(true)
+	withCloses["closes"] = map[string]any{cpOne: "agent"}
+	args := func(rev int, p map[string]any) map[string]any {
+		return map[string]any{"expected_revision": rev, "status_policy": p, "via": "cli-tty"}
+	}
+	if _, err := h.policyAs("lead", nil, args(1, withCloses)); err != nil {
+		t.Fatal("a lead couldn't change closes:", err)
+	}
+	if got := h.storedPolicy().Closes[cpOne]; got != "agent" {
+		t.Fatal("closes not stored:", got)
+	}
+	// Another field is the owner's.
+	other := sfPolicy(false)
+	other["closes"] = map[string]any{cpOne: "agent"}
+	if _, err := h.policyAs("lead", nil, args(2, other)); err == nil || !strings.Contains(err.Error(), "owner permission") {
+		t.Fatal("a lead changed another field:", err)
+	}
+	if _, err := h.policyAs("lead", nil, args(2, map[string]any{"enabled": true, "project_flow": true, "teams": sfPolicy(true)["teams"], "closes": withCloses["closes"]})); err == nil {
+		t.Fatal("a lead turned project flow on")
+	}
+	// A lead from a session is refused, as is a member.
+	session := h.call("whoami", "a", nil).(map[string]any)["session"].(map[string]any)
+	if _, err := h.policyAs("lead", session, args(2, sfPolicy(true))); err == nil || !strings.Contains(err.Error(), "owner permission") {
+		t.Fatal("a lead's session changed closes:", err)
+	}
+	if _, err := h.policyAs("member", nil, args(2, sfPolicy(true))); err == nil || !strings.Contains(err.Error(), "owner permission") {
+		t.Fatal("a member changed closes:", err)
+	}
+	// The typed-name requirement for loosening stands for a lead too.
+	loosen := sfPolicy(true)
+	loosen["closes"] = map[string]any{cpOne: "agent"}
+	if _, err := h.policyAs("lead", nil, map[string]any{"expected_revision": 2, "status_policy": sfPolicy(true), "via": "cli"}); err != nil {
+		t.Fatal("tightening needs no typed name:", err)
+	}
+	if _, err := h.policyAs("lead", nil, map[string]any{"expected_revision": 3, "status_policy": loosen, "via": "cli"}); err == nil || !strings.Contains(err.Error(), "confirmed at a terminal") {
+		t.Fatal("a lead loosened closes without typing:", err)
+	}
+}

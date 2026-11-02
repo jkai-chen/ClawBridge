@@ -661,7 +661,7 @@ var operationArgs = map[string]string{
 	"linear_issue_history":         "instance issue_uuid limit cursor",
 	"issue_move_settle":            "instance operation_id outcome old_identifier new_identifier children",
 	"issue_move_status":            "instance operation_id",
-	"project_team_add_reserve":     "instance operation_id linear_project team_id project_teams plan_sha256",
+	"project_team_add_reserve":     "instance operation_id linear_project team_id project_teams plan_sha256 server_project_teams server_project_teams_more",
 	"project_team_add_settle":      "instance operation_id outcome changed unverified",
 	"project_team_add_list":        "instance",
 	"project_plan_reserve":         "instance operation_id linear_project team_ids fields plan_sha256 confirm agent_marker project_teams project_teams_more",
@@ -940,13 +940,13 @@ func validateArgs(op string, a map[string]any) error {
 			if _, ok := intList(v, 1000); !ok {
 				return errors.New("lines must be an array of line numbers")
 			}
-		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "teams_without_project", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "changed", "unverified", "team_ids", "fields":
+		case "ids", "event_ids", "linear_team_ids", "linear_project_ids", "teams_without_project", "closes_pending", "scope_paths", "domains", "comment_ids", "signals", "roles", "pattern_ids", "issue_labels", "tools", "uses", "leases", "kinds", "label_ids", "user_ids", "project_teams", "server_project_teams", "changed", "unverified", "team_ids", "fields":
 			switch v.(type) {
 			case []string, []any:
 			default:
 				return errors.New("ids must be an array of strings")
 			}
-		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "project_teams_more", "enabled", "owner", "owner_missing", "replaced", "over_budget":
+		case "unread_only", "queue", "on", "all", "resume", "allow_overlap", "allow_previous", "repair", "confirm", "forced", "force_new", "nudges_only", "egress_confirmed", "set", "project_teams_more", "server_project_teams_more", "enabled", "owner", "owner_missing", "replaced", "over_budget":
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be boolean", k)
 			}
@@ -1388,7 +1388,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			if err = s.touchReadActor(ctx, tx, pid, r); err != nil {
 				return nil, err
 			}
-			return s.setProjectRole(ctx, tx, wid, pid, a)
+			return s.setProjectRole(ctx, tx, w, wid, pid, a)
 		}
 		if r.Operation == "project_role_revoke" {
 			if err = s.touchReadActor(ctx, tx, pid, r); err != nil {

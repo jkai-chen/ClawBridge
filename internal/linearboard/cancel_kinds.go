@@ -73,6 +73,7 @@ func (s *Service) SetCancelKindsV2(ctx context.Context, scope bus.Request, kinds
 	scope.Args["kinds"] = kinds
 	scope.Args["expected_revision"] = expected
 	scope.Args["via"] = via
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil && strings.Contains(e.Error(), `unsupported operation "status_cancel_kinds_set"`) {
 		return nil, errors.New("this server predates cancel-kinds set; upgrade the server first. Nothing was changed")

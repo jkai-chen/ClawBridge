@@ -212,17 +212,12 @@ func (s *Store) reserveProjectPlan(ctx context.Context, tx *transaction, wid, pi
 	}
 	// The agent guard: without a session the confirm is the person's own;
 	// a client that says an agent runs it is refused.
-	switch v := a["agent_marker"].(type) {
-	case nil:
-	case string:
-		if len(v) > 64 {
-			return nil, invalid("agent_marker must be a short string")
-		}
-		if v != "" && actor == nil {
-			return nil, scoped("setting a project plan without a session is a person's, and "+v+" says an agent runs this; an agent confirms from its session, or previews and asks the project owner or a lead", "forbidden")
-		}
-	default:
-		return nil, invalid("agent_marker must be a short string")
+	marker, err := agentMarkerArg(a)
+	if err != nil {
+		return nil, err
+	}
+	if marker != "" && actor == nil {
+		return nil, scoped("setting a project plan without a session is a person's, and "+marker+" says an agent runs this; an agent confirms from its session, or previews and asks the project owner or a lead", "forbidden")
 	}
 	project, err := lowerUUID(a, "linear_project", true)
 	if err != nil {

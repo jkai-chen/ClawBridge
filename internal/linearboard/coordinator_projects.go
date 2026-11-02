@@ -156,7 +156,7 @@ func (s *Service) AckProjectCreate(ctx context.Context, scope bus.Request, opera
 		return nil, errors.New("a session can't acknowledge a Linear write; the project owner, or the project lead who confirmed it, does, in their own terminal, without --session")
 	}
 	scope.Operation = "project_create_ack"
-	scope.Args = map[string]any{"operation_id": operationID}
+	scope.Args = bus.WithAgentMarker(map[string]any{"operation_id": operationID})
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }

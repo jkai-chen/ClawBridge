@@ -14,8 +14,9 @@ package linearkey
 import (
 	"errors"
 	"os"
-	"strings"
 	"sync/atomic"
+
+	"clawbridge/internal/agentenv"
 )
 
 var forbidden atomic.Bool
@@ -35,15 +36,7 @@ var ErrForbidden = errors.New("the Linear API key is read only by clawbridge lin
 
 // AgentMarker names the environment variable that says an agent runs this
 // process: Claude Code's, Codex's, or a ClawBridge session's; "" for none.
-func AgentMarker(env []string) string {
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "CLAUDECODE" || strings.HasPrefix(name, "CODEX_") || name == "CLAWBRIDGE_SESSION" || name == "CLAWBRIDGE_INSTANCE" {
-			return name
-		}
-	}
-	return ""
-}
+func AgentMarker(env []string) string { return agentenv.FromEnv(env) }
 
 // Allowed is guard, for a command to refuse before it asks for a key.
 func Allowed() error { return guard() }

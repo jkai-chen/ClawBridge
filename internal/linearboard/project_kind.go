@@ -47,7 +47,7 @@ func (s *Service) SetProjectKind(ctx context.Context, scope bus.Request, in Proj
 	if in.Group != "" {
 		args["group_name"] = in.Group
 	}
-	scope.Operation, scope.Args = "project_kind_set", args
+	scope.Operation, scope.Args = "project_kind_set", bus.WithAgentMarker(args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }

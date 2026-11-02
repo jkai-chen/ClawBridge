@@ -166,7 +166,7 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 		if v.revision < 0 {
 			return errors.New("--expected-revision is required: the revision roles project-lead printed (0 for none)")
 		}
-		result, e := executor.Execute(bounded, bus.Request{Operation: "project_lead_set", Workspace: scope.Workspace, Project: scope.Project, Args: map[string]any{"expected_revision": v.revision, "mode": pos[0]}})
+		result, e := executor.Execute(bounded, bus.Request{Operation: "project_lead_set", Workspace: scope.Workspace, Project: scope.Project, Args: bus.WithAgentMarker(map[string]any{"expected_revision": v.revision, "mode": pos[0]})})
 		if e != nil {
 			return e
 		}
@@ -287,7 +287,7 @@ func runLinearRoles(ctx context.Context, flags Config, args []string, stdout, st
 		return err
 	}
 	scope.Session = ""
-	result, err := executor.Execute(bounded, bus.Request{Operation: "team_roles_set", Workspace: scope.Workspace, Project: scope.Project, Args: map[string]any{"expected_revision": v.revision, "confirm": v.confirm, "mapping": rolesArg(next)}})
+	result, err := executor.Execute(bounded, bus.Request{Operation: "team_roles_set", Workspace: scope.Workspace, Project: scope.Project, Args: bus.WithAgentMarker(map[string]any{"expected_revision": v.revision, "confirm": v.confirm, "mapping": rolesArg(next)})})
 	if err != nil {
 		return err
 	}

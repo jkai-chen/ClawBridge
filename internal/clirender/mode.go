@@ -33,6 +33,12 @@ const (
 	FlagFalse
 )
 
+// This list is deliberately NOT agentenv's. agentenv names who must not make
+// a person's decision (it includes CLAWBRIDGE_SESSION and CLAWBRIDGE_INSTANCE);
+// this one only chooses plain JSON output for a shell an agent reads, and a
+// ClawBridge session's variables must not switch a person's output mode.
+// Both are the shell's own word and neither is a security boundary.
+//
 // agentMarkers are the environment variables an agent's shell sets (M1): an
 // agent in a PTY still gets JSON, whatever its skill says. Claude Code sets
 // CLAUDECODE in its shells, the runner's sessions included (the runner

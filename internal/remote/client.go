@@ -533,7 +533,40 @@ var ErrMarkersOffline = errors.New("the claim markers are unavailable offline: t
 // reached: the project's threads are read from the authority only.
 var ErrThreadsOffline = errors.New("the project's threads are unavailable offline: the server could not be reached")
 
+// unsupportedMarker is an older server's refusal of the agent_marker
+// argument, which it doesn't know. The server then checks no marker (a
+// guard against accidents, not a security boundary), so the client sends the
+// request again without it.
+const unsupportedMarker = `unsupported argument "agent_marker"`
+
+// Execute runs one operation. A person-only operation that carries a
+// non-empty agent_marker is refused here, before anything is sent, so an
+// older server can't let it through. One that carries an empty marker and
+// that an older server refuses for the agent_marker argument alone is
+// retried once without it (as the via retries do); no other refusal and no
+// other argument is.
 func (c *Client) Execute(ctx context.Context, r bus.Request) (bus.Result, error) {
+	if err := bus.RefuseMarkedRequest(r.Operation, r.Args); err != nil {
+		return bus.Result{}, err
+	}
+	result, err := c.execute(ctx, r)
+	if err == nil || !bus.PersonOnly(r.Operation) || !strings.Contains(err.Error(), unsupportedMarker) {
+		return result, err
+	}
+	if marker, sent := r.Args["agent_marker"].(string); !sent || marker != "" {
+		return result, err
+	}
+	args := make(map[string]any, len(r.Args))
+	for k, v := range r.Args {
+		if k != "agent_marker" {
+			args[k] = v
+		}
+	}
+	r.Args = args
+	return c.execute(ctx, r)
+}
+
+func (c *Client) execute(ctx context.Context, r bus.Request) (bus.Result, error) {
 	if outbox.Queueable(r) {
 		if ob := c.outbox(); ob != nil {
 			return c.executeQueueable(ctx, ob, r)

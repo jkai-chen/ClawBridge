@@ -272,6 +272,7 @@ func (s *Service) SetStatusPolicyV2(ctx context.Context, scope bus.Request, raw 
 	scope.Args["expected_revision"] = expected
 	scope.Args["status_policy"] = policy
 	scope.Args["via"] = via
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil && strings.Contains(e.Error(), `unsupported argument "via"`) {
 		// A server older than A3 takes no via, and checks nothing of it.

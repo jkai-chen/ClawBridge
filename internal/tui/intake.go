@@ -74,6 +74,9 @@ type intakeDoneMsg struct {
 
 // intakeRequest is a request as the person, with no session.
 func (m Model) intakeRequest(op string, args map[string]any) bus.Request {
+	if bus.PersonOnly(op) {
+		args = bus.WithAgentMarker(args)
+	}
 	return bus.Request{Operation: op, Workspace: m.cfg.Workspace, Project: m.cfg.Project, Args: args}
 }
 

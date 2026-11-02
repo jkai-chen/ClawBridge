@@ -13,7 +13,7 @@ flowchart TB
 
   subgraph SERVER["ClawBridge server · PostgreSQL"]
     BUS["Coordination bus<br/>sessions · acked inboxes · threads<br/>claims · audit log"]
-    SYNC["Linear sync<br/>webhooks + poll<br/>writes as the ClawBridge app"]
+    SYNC["Linear sync<br/>poll · webhooks (optional)<br/>writes as the ClawBridge app"]
     INTAKE["Intake queue<br/>who asked, proven<br/>from Linear history"]
     DISP["Dispatcher (optional)<br/>domains · trusted sessions<br/>rules + guardrails"]
     ESC["Escalations<br/>a person decides"]

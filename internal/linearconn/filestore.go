@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/zalando/go-keyring"
+
+	"clawbridge/internal/fsprivate"
 )
 
 // The places a connection's credential may be kept, as the device key's
@@ -104,25 +106,7 @@ func keyStoreSaid(cause error) string { return keyringCause(cause) }
 // onWindowsDrive reports whether path, through any symlink in it, is on
 // one of WSL's Windows drives.
 func onWindowsDrive(path string) bool {
-	if goos == "windows" {
-		return false
-	}
-	path = filepath.Clean(path)
-	// The nearest existing ancestor is resolved: the store's own
-	// directories may not be made yet.
-	resolved, rest := path, ""
-	for p := path; ; {
-		if r, e := filepath.EvalSymlinks(p); e == nil {
-			resolved = filepath.Join(r, rest)
-			break
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			break
-		}
-		rest, p = filepath.Join(filepath.Base(p), rest), parent
-	}
-	return strings.HasPrefix(resolved+string(filepath.Separator), windowsDrives)
+	return fsprivate.OnWindowsDrive(path, windowsDrives, goos == "windows")
 }
 
 func fileProblem(kind string, e error) error {

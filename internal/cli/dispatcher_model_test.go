@@ -58,6 +58,8 @@ func setupArgsFor(r bus.Request) map[string]any {
 	for k, v := range r.Args {
 		a[k] = v
 	}
+	// The marker is the environment's; the agent-marker test pins it.
+	delete(a, "agent_marker")
 	return a
 }
 
@@ -294,7 +296,7 @@ func TestModelRotate(t *testing.T) {
 	caps := dispatchermodel.DefaultCaps()
 	caps.RunsPerHour, caps.DailyTokens = 4, 500000
 	want := map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
-		"key": newKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true}
+		"key": newKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true, "agent_marker": ""}
 	if !reflect.DeepEqual(got.Args, want) || got.Project != "p" {
 		t.Fatalf("%v", got.Args)
 	}

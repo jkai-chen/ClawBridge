@@ -2,7 +2,8 @@ package linearboard
 
 import (
 	"os"
-	"strings"
+
+	"clawbridge/internal/agentenv"
 )
 
 // agentEnviron is the environment AgentMarker reads for an app write;
@@ -10,15 +11,7 @@ import (
 var agentEnviron = os.Environ
 
 // AgentMarker names the environment variable that says an agent runs this
-// command: Claude Code's, Codex's, or a ClawBridge session's. "" when there
-// is none. It is the client's own word: an agent that clears it in its
-// person's shell passes as the person.
-func AgentMarker(environ []string) string {
-	for _, kv := range environ {
-		name, _, _ := strings.Cut(kv, "=")
-		if name == "CLAUDECODE" || strings.HasPrefix(name, "CODEX_") || name == "CLAWBRIDGE_SESSION" || name == "CLAWBRIDGE_INSTANCE" {
-			return name
-		}
-	}
-	return ""
-}
+// command, "" when there is none. The definition is agentenv's, and the
+// marker is an accident guard, not a security boundary: an agent that clears
+// it in its person's shell passes as the person.
+func AgentMarker(environ []string) string { return agentenv.FromEnv(environ) }

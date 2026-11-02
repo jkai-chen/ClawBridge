@@ -242,6 +242,11 @@ func (s *Store) statusPolicyOp(ctx context.Context, tx *transaction, w, p map[st
 	if via != "" && !closesVia[via] {
 		return nil, invalid("via is cli, cli-tty or tui")
 	}
+	// An agent marker on a change to who closes or who may cancel: a
+	// person's decision (P0-C). The rest of the policy is not.
+	if marker, _ := agentMarkerArg(r.Args); marker != "" && (!closesEqual(stored, policy) || !cancelKindsEqual(stored.AgentMayCancelKinds, policy.AgentMayCancelKinds)) {
+		return nil, refuseAgent(marker)
+	}
 	// R89-H1: who closes is never a session's to change, even the owner's
 	// own session's: an agent could grant itself the right to close.
 	if actor != nil && !closesEqual(stored, policy) {

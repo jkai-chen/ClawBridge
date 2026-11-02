@@ -570,6 +570,7 @@ func (s *Service) LinkV2(ctx context.Context, scope bus.Request, in LinkInputV2)
 	teamNames, projectNames := linkNames(v)
 	scope.Args["linear_team_names"] = teamNames
 	scope.Args["linear_project_names"] = projectNames
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	for retry := 0; e != nil && retry < 2; retry++ {
 		msg := e.Error()
@@ -658,6 +659,7 @@ func (s *Service) UnlinkV2(ctx context.Context, scope bus.Request, revision int6
 	scope.Operation = "taskboard_clear_v2"
 	scope.Args = instanceArgs(scope.Args)
 	scope.Args["expected_revision"] = revision
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }
@@ -674,6 +676,7 @@ func (s *Service) RepairUnlinkV2(ctx context.Context, scope bus.Request, revisio
 	scope.Args = instanceArgs(scope.Args)
 	scope.Args["expected_revision"] = revision
 	scope.Args["repair"] = true
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }
@@ -1359,6 +1362,7 @@ func (s *Service) RefreshNamesV2(ctx context.Context, scope bus.Request) (any, e
 	scope.Args["expected_revision"] = b.Revision
 	scope.Args["linear_team_names"] = teams
 	scope.Args["linear_project_names"] = projects
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }

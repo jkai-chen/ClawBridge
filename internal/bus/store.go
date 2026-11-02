@@ -820,7 +820,7 @@ func validateArgs(op string, a map[string]any) error {
 		return fmt.Errorf("unsupported operation %q", op)
 	}
 	for k, v := range a {
-		if !strings.Contains(" "+keys+" ", " "+k+" ") {
+		if !strings.Contains(" "+keys+" ", " "+k+" ") && !(k == "agent_marker" && personOnlyOps[op]) {
 			return fmt.Errorf("unsupported argument %q for %s", k, op)
 		}
 		switch k {
@@ -1193,6 +1193,11 @@ func misclassifiedRead(tx *transaction, r Request, err error) error {
 }
 func (s *Store) executeRequest(ctx context.Context, r Request) (Result, error) {
 	if err := rejectNUL(r); err != nil {
+		return Result{}, err
+	}
+	// A person-only operation with an agent marker is refused first, before
+	// anything about its arguments is read.
+	if err := checkAgentMarker(r); err != nil {
 		return Result{}, err
 	}
 	if err := validateArgs(r.Operation, r.Args); err != nil {

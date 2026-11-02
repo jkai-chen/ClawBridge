@@ -113,7 +113,7 @@ func (s *Service) SetLanePin(ctx context.Context, scope bus.Request, in LanePinI
 	if !in.Clear {
 		scope.Operation, args["lane"] = "lane_pin_set", in.Lane
 	}
-	scope.Args = args
+	scope.Args = bus.WithAgentMarker(args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }
@@ -148,7 +148,7 @@ func (s *Service) SetLanes(ctx context.Context, scope bus.Request, in LanesSetIn
 	if in.Unpinned != "" {
 		args["unpinned"] = in.Unpinned
 	}
-	scope.Operation, scope.Args = "taskboard_lanes_set", args
+	scope.Operation, scope.Args = "taskboard_lanes_set", bus.WithAgentMarker(args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	return r.Data, e
 }

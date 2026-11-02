@@ -80,6 +80,7 @@ func (s *Service) ChangeIssueSubscribers(ctx context.Context, scope bus.Request,
 	for k, v := range args {
 		scope.Args[k] = v
 	}
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil {
 		return nil, e

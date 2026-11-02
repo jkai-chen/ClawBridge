@@ -1243,6 +1243,9 @@ flags:`)
 		}
 		config.Session = ""
 	}
+	if bus.PersonOnly(op) {
+		a = bus.WithAgentMarker(a)
+	}
 	if op == "dispatcher_chat_ask" || op == "dispatcher_chat_show" {
 		return runDispatcherChat(ctx, executor, config, op, a, stdout)
 	}

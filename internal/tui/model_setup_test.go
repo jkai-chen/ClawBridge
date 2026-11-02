@@ -161,7 +161,7 @@ func TestModelSetupScreen(t *testing.T) {
 	caps := dispatchermodel.DefaultCaps()
 	caps.RunsPerDay, caps.DailyTokens = 40, 500000
 	want := map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
-		"key": modelTestKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true}
+		"key": modelTestKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true, "agent_marker": ""}
 	if !reflect.DeepEqual(r.Args, want) || r.Workspace != "ws_1" || r.Project != "prj_1" {
 		t.Fatalf("%v", r)
 	}
@@ -406,7 +406,7 @@ func TestModelRotateScreen(t *testing.T) {
 	caps := dispatchermodel.DefaultCaps()
 	caps.RunsPerHour, caps.DailyTokens = 4, 500000
 	want := map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
-		"key": modelTestKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true}
+		"key": modelTestKey, "caps": caps.Args(), "egress_text_version": dispatchermodel.DisclosureVersion, "egress_confirmed": true, "agent_marker": ""}
 	if !reflect.DeepEqual(r.Args, want) {
 		t.Fatalf("%v", r.Args)
 	}

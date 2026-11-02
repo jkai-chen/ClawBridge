@@ -442,6 +442,7 @@ func (s *Service) sendKindSeed(ctx context.Context, b bus.TaskboardBindingV2, ac
 	}
 	rec := scope
 	rec.Operation, rec.Args = "project_kind_record", map[string]any{"expected_revision": set.revision, "action": action, "proof": "team_list", "group_label_id": out.Group.LabelID, "label_ids": ids}
+	rec.Args = bus.WithAgentMarker(rec.Args)
 	if _, e := s.cfg.Executor.Execute(ctx, rec); e != nil {
 		// The labels are in Linear: a new preview adopts them.
 		out.RecordError = e.Error() + "; preview the seed again: it adopts the labels made"

@@ -78,6 +78,7 @@ func (s *Service) ProjectFlowResumeV2(ctx context.Context, scope bus.Request, li
 	scope.Operation = "project_flow_resume"
 	scope.Args = instanceArgs(scope.Args)
 	scope.Args["linear_project"] = strings.ToLower(linearProject)
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil && strings.Contains(e.Error(), `unsupported operation "project_flow_resume"`) {
 		e = errors.New("this server predates project flow; upgrade it first")

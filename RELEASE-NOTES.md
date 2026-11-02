@@ -36,6 +36,11 @@
   `--unpinned NAME|read_only` replace the lanes and the unpinned setting at the revision you read, and leave every
   other field of the binding as it is; a stale revision is refused. It follows the same person-only rule, and history
   records counts only. No schema change. Linear config scope: none.
+- **A person-only command refuses to run from an agent session.** One definition of the agent marker (`CLAUDECODE`,
+  `CODEX_*`, `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE`) is sent with every person-only command, and the server
+  refuses it, naming the variable, never its value. A client that sends none is still allowed. The marker guards
+  against accidents; it is not a security boundary, as an agent can unset it. No schema change.
+  Linear config scope: none.
 
 # ClawBridge v1.0.1 (released 3 Nov)
 

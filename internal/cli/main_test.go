@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbridge/internal/agentenv"
 	"clawbridge/internal/ctxwatch"
 	"clawbridge/internal/faketool"
 )
@@ -34,6 +35,8 @@ func TestMain(m *testing.M) {
 	// Doctor reads the Claude Code settings and runs `claude --version`: no
 	// test reads the developer's own files or runs a real claude.
 	// A directory that is never created, so nothing there is read.
+	// A test run inside an agent session must not send its agent marker.
+	agentenv.Environ = func() []string { return nil }
 	dir := filepath.Join(os.TempDir(), "clawbridge-cli-test-no-claude-"+strconv.Itoa(os.Getpid()))
 	os.Setenv("CLAUDE_CONFIG_DIR", dir)
 	hooksClaudeVersion = func(context.Context) (string, bool) { return "", false }

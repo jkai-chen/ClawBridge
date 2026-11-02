@@ -125,6 +125,7 @@ func (s *Service) SetClosesV2(ctx context.Context, scope bus.Request, project, c
 	scope.Args["closes"] = closes
 	scope.Args["expected_revision"] = expected
 	scope.Args["via"] = via
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	r, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil && strings.Contains(e.Error(), `unsupported operation "status_closes_set"`) {
 		// §10.4: an older server; never write the whole policy for a lead.
@@ -314,6 +315,7 @@ func (s *Service) applyLinkCloses(ctx context.Context, scope bus.Request, in Lin
 	}
 	scope.Args["status_policy"] = policy
 	scope.Args["via"] = in.Via
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	_, e := s.cfg.Executor.Execute(ctx, scope)
 	if e != nil && strings.Contains(e.Error(), `unsupported argument "via"`) {
 		delete(scope.Args, "via")

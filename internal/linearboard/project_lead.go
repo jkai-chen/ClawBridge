@@ -369,6 +369,7 @@ func (s *Service) recordLead(ctx context.Context, scope bus.Request, project, le
 	if before.MembersKnown && after.MembersKnown {
 		scope.Args["members_before"], scope.Args["members_after"] = before.Members, after.Members
 	}
+	scope.Args = bus.WithAgentMarker(scope.Args)
 	_, _ = s.cfg.Executor.Execute(ctx, scope)
 }
 

@@ -22,7 +22,7 @@ CODE = ["skills/*"]
 # can't slip past the Windows job.
 WINDOWS_DIRS = [
     "cmd/clawbridge", "integration", "skills",
-    "internal/auth", "internal/buildinfo", "internal/bus", "internal/channel", "internal/cli", "internal/clirender",
+    "internal/agentenv", "internal/auth", "internal/buildinfo", "internal/bus", "internal/channel", "internal/cli", "internal/clirender",
     "internal/ctxwatch", "internal/devicekey", "internal/devicesign", "internal/dispatch",
     "internal/dispatchermodel", "internal/docpublish", "internal/docseed", "internal/doctor",
     "internal/faketool", "internal/fsprivate", "internal/hostobserve", "internal/install", "internal/linearapp",

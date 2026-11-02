@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"clawbridge/internal/agentenv"
 )
 
 // The server's own shape rules (internal/bus/dispatcher_model.go): every
@@ -164,12 +166,15 @@ func TestSetup(t *testing.T) {
 		return map[string]any{"config_revision": float64(7), "test": "pending"}, nil
 	}}
 	r := setupRequest()
+	old := agentenv.Environ
+	defer func() { agentenv.Environ = old }()
+	agentenv.Environ = func() []string { return []string{"CLAUDECODE=1"} }
 	revision, err := Setup(context.Background(), f.exec, r)
 	if err != nil || revision != 7 {
 		t.Fatal(revision, err)
 	}
 	want := map[string]any{"provider_id": "anthropic", "api": "anthropic-messages", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-5",
-		"key": testKey, "caps": r.Caps.Args(), "egress_text_version": "v1", "egress_confirmed": true}
+		"key": testKey, "caps": r.Caps.Args(), "egress_text_version": "v1", "egress_confirmed": true, "agent_marker": "CLAUDECODE"}
 	if !reflect.DeepEqual(f.requests[0], want) || f.ops[0] != "dispatcher_model_setup" {
 		t.Fatalf("%v", f.requests[0])
 	}

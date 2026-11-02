@@ -303,7 +303,7 @@ func (s *Service) AckLinearWrite(ctx context.Context, scope bus.Request, op stri
 	}
 	if len(server) > 0 && serverErr == nil {
 		scope.Operation = "issue_writes_ack"
-		scope.Args = map[string]any{"operation_id": op}
+		scope.Args = bus.WithAgentMarker(map[string]any{"operation_id": op})
 		r, e := s.cfg.Executor.Execute(ctx, scope)
 		if e != nil {
 			return out, e

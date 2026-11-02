@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"clawbridge/internal/agentenv"
 )
 
 // Provider is one entry of the provider list: what the agent's pinned
@@ -345,6 +347,7 @@ func Setup(ctx context.Context, exec Exec, r Request) (int64, error) {
 	data, err := exec(ctx, "dispatcher_model_setup", map[string]any{
 		"provider_id": r.Provider.ID, "api": r.Provider.API, "base_url": baseURL, "model": r.Model, "key": key,
 		"caps": r.Caps.Args(), "egress_text_version": DisclosureVersion, "egress_confirmed": true,
+		"agent_marker": agentenv.Marker(),
 	})
 	if err != nil {
 		if carriesKey(err.Error(), key) {

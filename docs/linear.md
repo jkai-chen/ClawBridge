@@ -808,6 +808,24 @@ confirmed, so a later rename never changes a note):
   the line. The comment stays `author_kind: unknown` and its body stays
   untrusted.
 
+### Person-only commands and the agent marker
+
+Some commands are a person's decision, run in their own terminal: who closes
+or may cancel issues, project leads, team roles, lane pins, the project kind,
+resuming project flow, trusted intake people (the intake vouchers), issue
+subscribers, the dispatcher's on/off, advise, chat and model settings, the
+task-board link, its names (`taskboard_names_set`) and its lanes (`linear lanes set`), the acknowledgement of a
+project a coordinator session created (`project_create_ack`), and the
+acknowledgements of uncertain writes. ClawBridge sends the name of an agent
+environment variable with each of them when one is set: `CLAUDECODE`, any
+`CODEX_*`, `CLAWBRIDGE_SESSION` or `CLAWBRIDGE_INSTANCE`. The server refuses the
+command and names the variable (never its value); a client that sends none is
+allowed, so an older client still works. **This guards against accidents. It is
+not a security boundary:** the marker is the client's own word, and an agent on
+your machine can unset these variables and pass as you. A server older than
+this check does not check the marker: the client then sends the command again
+without it.
+
 ### Writes as the ClawBridge app (hosted servers)
 
 When a hosted server runs the ClawBridge Linear app (see the deployment guide),

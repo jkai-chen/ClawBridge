@@ -123,7 +123,7 @@ func (s *linearTUISource) rolesSet(ctx context.Context, service *linearboard.Ser
 	// The session is refused above: this is the person's own request.
 	person := s.scope
 	person.Operation = "team_roles_set"
-	person.Args = map[string]any{"expected_revision": c.Revision, "confirm": c.Confirm, "mapping": rolesArg(next)}
+	person.Args = bus.WithAgentMarker(map[string]any{"expected_revision": c.Revision, "confirm": c.Confirm, "mapping": rolesArg(next)})
 	result, err := s.executor.Execute(ctx, person)
 	if err != nil {
 		return err

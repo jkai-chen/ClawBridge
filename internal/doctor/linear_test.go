@@ -226,6 +226,9 @@ func TestEveryDoctorCapabilityFlagIsOnAgainstTheNativeCatalog(t *testing.T) {
 	if err = json.Unmarshal(raw, &tools); err != nil {
 		t.Fatal(err)
 	}
+	// The 22 Oct catalog predates list_milestones, which was recorded on 2 Nov
+	// (the recording is not edited): load that one and append it.
+	tools = append(tools, recordedTool(t, "../linearprovider/testdata/list-milestones-20261102.json"))
 	p, err := linearprovider.NewWithCaller(context.Background(), catalogCaller(tools))
 	if err != nil {
 		t.Fatal(err)
@@ -276,4 +279,18 @@ func TestDeviceInstalledEntryMatchesDoctor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recordedTool reads one dated recording of a single tool.
+func recordedTool(t *testing.T, path string) *mcp.Tool {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool mcp.Tool
+	if err = json.Unmarshal(raw, &tool); err != nil {
+		t.Fatal(err)
+	}
+	return &tool
 }

@@ -398,6 +398,8 @@ one you haven't evaluated, and don't move someone else's without asking. A
 server that can't set a due date refuses the write and sends nothing; a date
 Linear doesn't confirm makes the write uncertain, so read the issue back.
 
+When you plan a project, put its issues under the project's existing milestones (people create milestones in Linear for now). List them with `taskboard_milestones_v2 {project}` (`linear milestone list PROJECT_UUID`). Put an issue in one with `milestone` (an ID from that list, in the issue's own project; `linear create|update --milestone`). Don't move someone else's issue between milestones without asking. Clearing a milestone isn't available yet (refused, nothing sent), and a project change that drops the milestone reads uncertain.
+
 Set a human assignee only when explicitly requested and verified as an eligible
 team member. That assignment does not replace the coordinator's Current agent
 block or transfer repository ownership. After a requested project/parent change,

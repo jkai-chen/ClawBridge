@@ -17,7 +17,7 @@ import (
 var sha256Pattern = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 func legacyOnlyV2(in WriteInputV2) bool {
-	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.ExpectedUpdatedAt == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
+	return in.TeamID == "" && !in.Project.Present && !in.Labels.Present && !in.ExpectedLabels.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && !in.Milestone.Present && in.ExpectedTitle == nil && in.ExpectedDescriptionSHA256 == nil && in.ExpectedUpdatedAt == nil && in.AddLabels == nil && in.RemoveLabels == nil && in.InResponseTo == ""
 }
 
 // labelPlanV2 is the part of the requested label deltas that would change the
@@ -157,6 +157,15 @@ func ValidateWriteV2(in WriteInputV2) error {
 	}
 	if in.Operation == "create" && in.DueDate.Present && in.DueDate.Value == nil {
 		return errors.New("a new issue has no due date to clear")
+	}
+	if !in.Milestone.Present && in.Milestone.Value != nil {
+		return errors.New("nullable intent requires explicit presence and canonical UUID or null")
+	}
+	if in.Milestone.Present && in.Milestone.Value == nil {
+		return errors.New(linearprovider.MilestoneClearRefused)
+	}
+	if in.Milestone.Value != nil && !linearprovider.ValidID(*in.Milestone.Value) {
+		return errors.New("milestone requires a milestone ID (UUID), never a name; take it from the milestone list")
 	}
 	for _, f := range []linearprovider.Field[*string]{in.Project, in.Parent, in.Assignee} {
 		if (!f.Present && f.Value != nil) || (f.Present && f.Value != nil && !linearprovider.ValidID(*f.Value)) {
@@ -573,12 +582,17 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 	}
 	// A request whose only intent is label deltas that are already in effect
 	// is recorded as observed_unchanged and sends nothing.
-	unchanged := deltas && plan.empty() && in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present
+	unchanged := deltas && plan.empty() && in.Title == nil && in.Description == nil && in.StateID == nil && !in.Project.Present && !in.Parent.Present && !in.Assignee.Present && in.Priority == nil && !in.DueDate.Present && !in.Milestone.Present
 	if in.Priority != nil && !caps.Priority {
 		return nil, errors.New("provider cannot set an issue's priority; nothing was sent")
 	}
 	if in.DueDate.Present && !caps.DueDate {
 		return nil, errors.New("this Linear connection can't set a due date; nothing was sent")
+	}
+	if in.Milestone.Present {
+		if e = checkMilestoneV2(ctx, p2, caps, in, current, project); e != nil {
+			return nil, e
+		}
 	}
 	if in.Assignee.Present {
 		if !caps.Assignee {
@@ -678,13 +692,13 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 				if in.StateID != nil {
 					state = *in.StateID
 				}
-				create := linearprovider.CreateInputV2{CreateInput: linearprovider.CreateInput{TeamID: team, ProjectID: project, Title: *in.Title, Description: description, StateID: state}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate}
+				create := linearprovider.CreateInputV2{CreateInput: linearprovider.CreateInput{TeamID: team, ProjectID: project, Title: *in.Title, Description: description, StateID: state}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, Milestone: in.Milestone}
 				if verifiedParent {
 					create = create.WithSameDestinationParent()
 				}
 				e = validation.ValidateCreateV2(create)
 			} else if in.Operation == "update" && !unchanged {
-				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
+				update := linearprovider.UpdateInputV2{UpdateInput: linearprovider.UpdateInput{ID: in.IssueID, Title: in.Title, Description: in.Description, StateID: in.StateID}, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, Milestone: in.Milestone, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
 				if verifiedParent {
 					update = update.WithSameDestinationParent()
 				}
@@ -755,7 +769,7 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				create := linearprovider.CreateInputV2{CreateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate}
+				create := linearprovider.CreateInputV2{CreateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, Milestone: in.Milestone}
 				if verifiedParent {
 					create = create.WithSameDestinationParent()
 				}
@@ -788,7 +802,7 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 				issue.Issue = i
 				issue.ProjectKnown = true
 			} else {
-				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
+				update := linearprovider.UpdateInputV2{UpdateInput: base, Project: in.Project, Labels: in.Labels, Parent: in.Parent, Assignee: in.Assignee, Priority: in.Priority, DueDate: in.DueDate, Milestone: in.Milestone, AddLabels: nonEmptyV2(plan.Add), RemoveLabels: nonEmptyV2(plan.Remove)}
 				if verifiedParent {
 					update = update.WithSameDestinationParent()
 				}
@@ -807,6 +821,12 @@ func (s *Service) writeV2Personal(ctx context.Context, scope bus.Request, in Wri
 			issue = s.withStateID(ctx, scope, issue, in, legacy)
 			if unverified, e = receiptFieldsV2(issue, in, legacy); e != nil {
 				return nil, post(e)
+			}
+			// A project change keeps or loses the issue's milestone, and a
+			// loss is never silent: unless the write gave a milestone, one
+			// that changed or dropped makes the write uncertain.
+			if !legacy && in.Project.Present && !in.Milestone.Present && milestoneOff(current, issue) {
+				return nil, post(&linearprovider.Error{Kind: "receipt_mismatch"})
 			}
 			// Native receipts name labels only; Linear's list filtered by
 			// each delta label's UUID then shows whether it took effect. A
@@ -1053,6 +1073,15 @@ func receiptFieldsV2(issue linearprovider.IssueV2, in WriteInputV2, legacy bool)
 			got = *issue.DueDate
 		}
 		if !issue.DueDateKnown || got != want {
+			return nil, mismatch
+		}
+	}
+	if in.Milestone.Present {
+		want := ""
+		if in.Milestone.Value != nil {
+			want = *in.Milestone.Value
+		}
+		if !issue.MilestoneKnown || derefDate(issue.MilestoneID) != want {
 			return nil, mismatch
 		}
 	}

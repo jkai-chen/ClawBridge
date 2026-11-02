@@ -154,6 +154,10 @@ type WriteInputV2 struct {
 	// clears it. omitzero keeps the ledger digest of writes without one
 	// unchanged.
 	DueDate linearprovider.Field[*string] `json:",omitzero"`
+	// Milestone is a milestone ID of the issue's project; Present with a nil
+	// Value is a clear, which is always refused. omitzero keeps the ledger
+	// digest of writes without one unchanged.
+	Milestone linearprovider.Field[*string] `json:",omitzero"`
 	// ExpectedTitle and ExpectedDescriptionSHA256 are optional guards on an
 	// update that replaces the title or description: the title, or the
 	// description_sha256, the caller last read. omitempty keeps the ledger

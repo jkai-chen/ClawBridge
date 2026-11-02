@@ -280,6 +280,13 @@ func writeArgsV2(in WriteInputV2) map[string]any {
 			args["due_date"] = *in.DueDate.Value
 		}
 	}
+	if in.Milestone.Present {
+		if in.Milestone.Value == nil {
+			args["milestone"] = nil
+		} else {
+			args["milestone"] = *in.Milestone.Value
+		}
+	}
 	if in.Priority != nil {
 		args["priority"] = *in.Priority
 	}

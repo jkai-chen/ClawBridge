@@ -1,0 +1,30 @@
+{
+ "_meta": {
+  "microsoft/allowedDomains": [
+   "linear.app<https://linear.app/>"
+  ]
+ },
+ "annotations": {
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "openWorldHint": false,
+  "readOnlyHint": true
+ },
+ "description": "List all milestones in a Linear project",
+ "inputSchema": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+   "project": {
+    "description": "Project name, ID, identifier (e.g., P-ENG-123), or slug",
+    "type": "string"
+   }
+  },
+  "required": [
+   "project"
+  ],
+  "type": "object"
+ },
+ "name": "list_milestones",
+ "title": "List project milestones"
+}

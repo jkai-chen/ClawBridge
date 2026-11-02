@@ -22,6 +22,14 @@
 
 ## Linear
 
+- **List a project's milestones, and put an issue in one.** `clawbridge linear milestone list PROJECT_UUID` (and
+  `taskboard_milestones_v2`) shows a bound project's milestones: name, target date, progress and sort order. An issue
+  takes a milestone on create or update with `--milestone` (the `milestone` field of the create and update tools): an
+  ID from that list, in the issue's own project, never a name; a milestone from another project is refused
+  (`milestone_not_in_project`, `no_project`) before anything is sent, and the result is read back. A move or project
+  change that drops the issue's milestone reads uncertain. Clearing a milestone is refused for now, and creating or
+  updating milestones comes in a later release. docs/linear.md "Milestones". No schema change. Linear config scope:
+  none.
 - **The description guard works on servers that write as the ClawBridge app** (lifts the 1.0 known limit). An
   update with `--expect-description-sha256` (`expected_description_sha256`) on a description that mentions issues is
   no longer refused when nothing changed. The client re-reads the issue with your own profile just before sending and

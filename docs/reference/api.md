@@ -1159,7 +1159,11 @@ through an agent. KEY is `CLAWBRIDGE_LINEAR_APP_CLIENT_ID` or
 `CLAWBRIDGE_BACKUP_ACCESS_KEY_ID` and `CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY`, or
 the Linear webhooks' `CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS` (the whole
 `TEAM_UUID=SECRET[,…]` line, checked as the server checks it before it is
-sent; the two OAuth client secrets went with Google sign-in in v1.0). The value is read
+sent), or `CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET` (one secret, or two
+comma-separated during a rotation; checked the same way, but that it differs
+from every team webhook secret is checked only when the server starts; reserved,
+no effect yet). The two OAuth client secrets went with Google sign-in in v1.0.
+The value is read
 from a hidden prompt, or
 from a pipe with `--value-stdin`; it must be one line of printable ASCII without
 whitespace, quotes, `$`, `#`, backslash or backtick, at most 4096 bytes. It

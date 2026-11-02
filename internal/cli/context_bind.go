@@ -244,7 +244,7 @@ func runContextHooks(args []string, stdout, stderr io.Writer) error {
 	dryRun := f.Bool("dry-run", false, "show the change without making it")
 	channel := new(bool)
 	if install {
-		channel = f.Bool("channel", false, "also install the turn hook the ClawBridge channel needs (FR26)")
+		channel = f.Bool("channel", false, "also install the turn hook the ClawBridge channel needs")
 	}
 	if err := f.Parse(args[1:]); err != nil {
 		return err

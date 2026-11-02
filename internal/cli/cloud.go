@@ -397,6 +397,12 @@ var secretKeys = map[string]bool{
 	// (docs/operations/deployment.md, "Linear webhooks"): the whole line, so
 	// adding a team re-enters every entry.
 	"CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS": true,
+	// The Linear app webhook's signing secret: one secret, or two
+	// comma-separated during a rotation. It needs the Linear app, and the
+	// server refuses at start a value that equals a team webhook secret
+	// (this client holds none, so it cannot check that). Reserved for the
+	// coming app webhook; it has no effect yet.
+	"CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET": true,
 }
 
 const serverEnvFile = "/etc/clawbridge/clawbridge.env"
@@ -522,6 +528,11 @@ func runCloudSecretSet(ctx context.Context, args []string, stdout, stderr io.Wri
 	// A line serve would refuse to start with never reaches the env file.
 	if key == "CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS" {
 		if err = server.CheckWebhookSecrets(value); err != nil {
+			return err
+		}
+	}
+	if key == "CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET" {
+		if err = server.CheckAppWebhookSecret(value); err != nil {
 			return err
 		}
 	}

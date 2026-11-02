@@ -334,6 +334,44 @@ func TestCloudSecretSetWebhookSecrets(t *testing.T) {
 	}
 }
 
+// The app webhook secret is one value, or two during a rotation, checked as
+// the server checks it. A bad value never leaves this machine and the error
+// does not show it.
+func TestCloudSecretSetAppWebhookSecret(t *testing.T) {
+	const key = "CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET"
+	const one, two = "synthetic_app_secret_0001", "synthetic_app_secret_0002"
+	for name, good := range map[string]string{"one": one, "rotation": one + "," + two} {
+		calls := stubSecretIO(t, good+"\n", true, nil)
+		out, err := secretSet(key, "--ssh", "admin@bridge.example.test")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		script := `sudo -n sh -c '` + remoteSetScript(key, serverEnvFile) + `'`
+		if len(*calls) != 1 || !reflect.DeepEqual((*calls)[0].argv, wantSSH("admin@bridge.example.test", "env LC_ALL=C "+script)) || (*calls)[0].stdin != good+"\n" {
+			t.Fatalf("%s: %+v", name, *calls)
+		}
+		if strings.Contains(strings.Join((*calls)[0].argv, " "), "synthetic_app") || strings.Contains(out, "synthetic_app") {
+			t.Fatalf("%s: value leaked: %q", name, out)
+		}
+	}
+	for name, c := range map[string]struct{ value, want string }{
+		"short":       {"short", "value 1: a secret is 16-256 characters"},
+		"empty part":  {one + ",", "value 2: a secret is 16-256 characters"},
+		"three parts": {one + "," + two + ",synthetic_app_secret_0003", "holds at most 2 values"},
+		"space":       {"synthetic_app secret_0001", "unsupported character"},
+		"repeated":    {one + "," + one, "value 2 repeats value 1"},
+	} {
+		calls := stubSecretIO(t, c.value+"\n", true, nil)
+		_, err := secretSet(key, "--ssh", "admin@bridge.example.test")
+		if err == nil || !strings.Contains(err.Error(), c.want) || len(*calls) != 0 {
+			t.Fatalf("%s: %v, %d calls", name, err, len(*calls))
+		}
+		if strings.Contains(err.Error(), "synthetic_app") {
+			t.Fatalf("%s: the error names a value: %v", name, err)
+		}
+	}
+}
+
 func TestCloudSecretSetRefusesBadInput(t *testing.T) {
 	key := "CLAWBRIDGE_LINEAR_APP_CLIENT_ID"
 	for name, c := range map[string]struct {
@@ -486,7 +524,8 @@ func TestSecretKeysArePinned(t *testing.T) {
 	want := map[string]bool{
 		"CLAWBRIDGE_LINEAR_APP_CLIENT_ID": true, "CLAWBRIDGE_LINEAR_APP_CLIENT_SECRET": true,
 		"CLAWBRIDGE_BACKUP_ACCESS_KEY_ID": true, "CLAWBRIDGE_BACKUP_SECRET_ACCESS_KEY": true,
-		"CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS": true,
+		"CLAWBRIDGE_LINEAR_WEBHOOK_SECRETS":    true,
+		"CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET": true,
 	}
 	if !reflect.DeepEqual(secretKeys, want) {
 		t.Fatalf("secret set keys: %v", secretKeys)

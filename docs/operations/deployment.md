@@ -791,7 +791,10 @@ never a value.
 rotation; 16 to 256 printable ASCII characters with no space or comma; needs the
 Linear app) and `CLAWBRIDGE_APP_WEBHOOK_PROVEN` (`1` or `0`) are recognised and
 checked at start, and a bad secret refuses the start. Nothing reads them yet, so
-setting them changes nothing and adds no route.
+setting them changes nothing and adds no route. `clawbridge cloud secret set
+CLAWBRIDGE_LINEAR_APP_WEBHOOK_SECRET` accepts the secret and checks its shape
+before sending it; that it differs from every team webhook secret is checked
+only when the server starts.
 
 ### The server watcher (optional, v0.3)
 

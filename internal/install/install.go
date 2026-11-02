@@ -66,6 +66,9 @@ func RunWithIO(args []string, stdout, stderr io.Writer) error {
 	f.StringVar(&o.DeviceID, "device-id", "", "this device's ID, for the device credential source")
 	f.StringVar(&o.KeyStore, "key-store", "", "where the device key is kept: keyring, file or env")
 	f.BoolVar(&o.DryRun, "dry-run", false, "preview the entry without writing files")
+	// The CLI takes --settings-dir before this parser runs; it is here for
+	// the help text.
+	f.String("settings-dir", "", "claude-code: the folder whose .claude/ gets the hooks (default: the project this runs in, when --config is given)")
 	f.Bool("json", true, "return JSON (the default output format)")
 	if err := f.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

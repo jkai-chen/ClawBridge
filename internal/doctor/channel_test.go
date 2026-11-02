@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"os"
 	"regexp"
@@ -202,5 +203,50 @@ func TestCheckChannelNotifierAndDevFlag(t *testing.T) {
 	checkChannel(ChannelState{Session: "agent", Marketplace: true, Enabled: true, Allowlisted: true, Record: rec(ctxwatch.ChannelActive, false, 91*time.Second)}, now, func(c Check) { got = append(got, c) })
 	if c := got[0]; strings.Count(strings.ToLower(c.Message), "the notifier ") != 1 || !strings.HasSuffix(c.Message, types) {
 		t.Errorf("not asked, stale: %s %q", c.Status, c.Message)
+	}
+}
+
+// A session whose channel server has run, with no turn hook in the settings
+// this project reads, gets a warning naming the command (FR67); with the
+// hook, or with no channel launched, it gets none.
+func TestCheckChannelHook(t *testing.T) {
+	live := &ctxwatch.ChannelState{Version: 1, State: ctxwatch.ChannelUnconfirmed}
+	idle := &ctxwatch.ChannelState{Version: 1, State: ctxwatch.ChannelInactive}
+	for name, c := range map[string]struct {
+		state ChannelState
+		warns bool
+	}{
+		"hook installed":      {ChannelState{Record: live, Asked: true}, false},
+		"hook missing":        {ChannelState{Record: live}, true},
+		"no channel launched": {ChannelState{Record: idle}, false},
+		"no channel record":   {ChannelState{}, false},
+	} {
+		var got []Check
+		checkChannelHook(c.state, func(k Check) { got = append(got, k) })
+		if !c.warns {
+			if len(got) != 0 {
+				t.Fatalf("%s: %+v", name, got)
+			}
+			continue
+		}
+		if len(got) != 1 || got[0].Status != Warn || !strings.Contains(got[0].Action, "clawbridge context hooks install --channel") {
+			t.Fatalf("%s: %+v", name, got)
+		}
+	}
+}
+
+// Run reaches the hook check: a channel record without the hook warns there.
+func TestRunWarnsOnChannelWithoutTurnHook(t *testing.T) {
+	var found bool
+	in := Input{Channel: func() ChannelState {
+		return ChannelState{Session: "agent", Record: &ctxwatch.ChannelState{Version: 1, State: ctxwatch.ChannelUnconfirmed, UpdatedAt: time.Now().Format(time.RFC3339)}}
+	}}
+	for _, c := range Run(context.Background(), in, nil).Checks {
+		if c.ID == "mcp.channel.hook" && c.Status == Warn {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no mcp.channel.hook warning")
 	}
 }

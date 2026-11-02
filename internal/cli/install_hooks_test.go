@@ -21,7 +21,7 @@ func TestMCPInstallAddsHooks(t *testing.T) {
 	dir := isolated(t)
 	project := filepath.Join(dir, "project")
 	install := func(extra ...string) (string, string, error) {
-		args := append([]string{"--session", "agent", "--workspace", "w", "--project", "p", "mcp", "install", "--agent", "claude-code", "--config", filepath.Join(project, ".mcp.json")}, extra...)
+		args := append([]string{"--session", "agent", "--workspace", "w", "--project", "p", "mcp", "install", "--agent", "claude-code", "--config", filepath.Join(project, ".mcp.json"), "--settings-dir", project}, extra...)
 		var out, errs bytes.Buffer
 		err := Run(context.Background(), args, &out, &errs)
 		return out.String(), errs.String(), err
@@ -103,5 +103,63 @@ func TestDoctorHooksReadsFormAndVersion(t *testing.T) {
 	}
 	if st = doctorHooks(context.Background()); st.Err == nil {
 		t.Fatalf("%+v", st)
+	}
+}
+
+// The hooks go where Claude Code runs, not beside a --config file kept
+// elsewhere (FR67): the project this command runs in, or --settings-dir.
+func TestMCPInstallHooksGoToTheAgentsFolder(t *testing.T) {
+	dir := isolated(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "claude"))
+	repo, elsewhere, other := filepath.Join(dir, "repo"), filepath.Join(dir, "x"), filepath.Join(dir, "other")
+	for _, d := range []string{repo, elsewhere, other} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(repo)
+	install := func(extra ...string) string {
+		t.Helper()
+		args := append([]string{"--session", "agent", "--workspace", "w", "--project", "p", "mcp", "install", "--agent", "claude-code", "--channel", "--config", filepath.Join(elsewhere, "mcp.json")}, extra...)
+		var out, errs bytes.Buffer
+		if err := Run(context.Background(), args, &out, &errs); err != nil {
+			t.Fatal(err, errs.String())
+		}
+		return errs.String()
+	}
+	hasTurn := func(root string) bool {
+		got, err := ctxwatch.TurnHookInstalled(filepath.Join(root, ".claude", "settings.local.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	errs := install()
+	if !hasTurn(repo) {
+		t.Fatalf("no turn hook in the project: %s", errs)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, ".claude")); err == nil {
+		t.Fatal("hooks went beside the config file")
+	}
+	root, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "the hooks went to "
+	if i := strings.Index(errs, want); i < 0 || !strings.Contains(errs, "settings.local.json; Claude Code must run in ") || !strings.Contains(errs, "(use --settings-dir to choose another folder)") || strings.Count(errs, want) != 1 {
+		t.Fatalf("%s (%s)", errs, root)
+	}
+
+	errs = install("--name", "second", "--settings-dir", other)
+	if !hasTurn(other) || !strings.Contains(errs, filepath.Join(other, ".claude", "settings.local.json")) {
+		t.Fatalf("--settings-dir ignored: %s", errs)
+	}
+
+	// With the config file in the folder the hooks went to, there is nothing to say.
+	args := []string{"--session", "agent", "--workspace", "w", "--project", "p", "mcp", "install", "--agent", "claude-code", "--config", filepath.Join(repo, ".mcp.json"), "--name", "third"}
+	var out, errBuf bytes.Buffer
+	if err := Run(context.Background(), args, &out, &errBuf); err != nil || strings.Contains(errBuf.String(), "the hooks went to") {
+		t.Fatal(err, errBuf.String())
 	}
 }

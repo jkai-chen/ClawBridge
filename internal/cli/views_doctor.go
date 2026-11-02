@@ -87,6 +87,7 @@ var doctorAnswers = map[string]doctorAnswer{
 	"queue":                        {},
 	"hooks":                        {},
 	"mcp.channel":                  {},
+	"mcp.channel.hook":             {},
 	"server.maintenance":           {},
 	"client.outbox":                {},
 	"coordinator.playbook":         {},

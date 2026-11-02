@@ -320,7 +320,9 @@ func Run(ctx context.Context, in Input, executor Executor) Report {
 		checkQueue(ctx, in.Queue(), in.Config, queueExecutor, in.Now, add)
 	}
 	if in.Channel != nil {
-		checkChannel(in.Channel(), in.Now, add)
+		state := in.Channel()
+		checkChannel(state, in.Now, add)
+		checkChannelHook(state, add)
 	}
 	if in.Hooks != nil {
 		checkHooks(in.Hooks(), add)

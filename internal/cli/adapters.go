@@ -63,7 +63,10 @@ func runInstall(ctx context.Context, flags Config, args []string, stdout, stderr
 // mcpInstallHooks is what mcp install does about Claude Code's hooks: the
 // scope (local, user, project-shared or none) and whether it was chosen.
 type mcpInstallHooks struct {
-	scope, root           string
+	scope, root string
+	// configDir is the folder of an explicit --config file, "" when none
+	// was given; installHooks says so when the hooks went elsewhere.
+	configDir             string
 	explicit              bool
 	dryRun, confirmShared bool
 	// channel adds the turn hook and lists the channel's setup steps
@@ -79,7 +82,8 @@ type mcpInstallHooks struct {
 func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 	h := mcpInstallHooks{scope: "none"}
 	rest := []string{}
-	agent, config := "", ".mcp.json"
+	agent, config, settingsDir := "", ".mcp.json", ""
+	configGiven := false
 	for i := 0; i < len(args); i++ {
 		name, value, inline := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
 		takeValue := func() (string, error) {
@@ -103,6 +107,13 @@ func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 		case strings.HasPrefix(args[i], "-") && name == "confirm-shared":
 			h.confirmShared = !inline || value == "true"
 			continue
+		case strings.HasPrefix(args[i], "-") && name == "settings-dir":
+			v, err := takeValue()
+			if err != nil {
+				return nil, h, err
+			}
+			settingsDir = v
+			continue
 		case strings.HasPrefix(args[i], "-") && name == "channel":
 			h.channel = !inline || value == "true"
 			continue
@@ -117,7 +128,7 @@ func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 			if name == "agent" {
 				agent = v
 			} else {
-				config = v
+				config, configGiven = v, true
 			}
 			continue
 		case strings.HasPrefix(args[i], "-") && name == "dry-run":
@@ -150,7 +161,23 @@ func installHookFlags(args []string) ([]string, mcpInstallHooks, error) {
 	if err != nil {
 		return nil, h, err
 	}
+	// Claude Code reads a project's hooks from the folder it runs in, which
+	// a --config file kept elsewhere says nothing about: the hooks go to
+	// --settings-dir, else to the project this command runs in.
 	h.root = filepath.Dir(path)
+	switch {
+	case settingsDir != "":
+		if h.root, err = filepath.Abs(settingsDir); err != nil {
+			return nil, h, err
+		}
+	case configGiven:
+		if h.root, _, err = projectRoot(); err != nil {
+			return nil, h, err
+		}
+	}
+	if configGiven {
+		h.configDir = filepath.Dir(path)
+	}
 	if !h.explicit {
 		h.scope = ctxwatch.ScopeLocal
 		if filepath.Base(path) == ".claude.json" {
@@ -177,6 +204,13 @@ func installHooks(h mcpInstallHooks, stderr io.Writer) error {
 	}
 	if err != nil {
 		return err
+	}
+	if h.configDir != "" && h.scope != ctxwatch.ScopeUser && filepath.Clean(h.configDir) != filepath.Clean(h.root) {
+		name := "settings.local.json"
+		if h.scope == ctxwatch.ScopeProjectShared {
+			name = "settings.json"
+		}
+		fmt.Fprintf(stderr, "the hooks went to %s; Claude Code must run in %s to use them (use --settings-dir to choose another folder)\n", filepath.Join(h.root, ".claude", name), h.root)
 	}
 	if h.channel {
 		instance := h.instance

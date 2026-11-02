@@ -171,3 +171,20 @@ func channelReason(reason string) string {
 	}
 	return "no reason recorded"
 }
+
+// checkChannelHook warns when this session's channel server has run (its
+// record says it was launched as a channel) but no turn hook is installed in
+// the settings this project reads. Claude Code reads project hooks from the
+// folder it runs in, so the hook has to be there; a session never asked for a
+// channel has nothing to check.
+func checkChannelHook(s ChannelState, add func(Check)) {
+	r := s.Record
+	if r == nil || r.State == ctxwatch.ChannelInactive || s.Asked {
+		return
+	}
+	add(Check{
+		ID: "mcp.channel.hook", Title: "Channel turn hook (Claude Code)", Status: Warn,
+		Message: "This session runs a channel, but no turn hook is installed in this folder's Claude Code settings or the user's, so its channel turns are not marked and the channel can't be confirmed.",
+		Action:  "Run `clawbridge context hooks install --channel` in the folder Claude Code runs in (mcp install --channel --config FILE puts the hook there, or in --settings-dir).",
+	})
+}

@@ -226,7 +226,8 @@ under a distinct entry name if configuring several entries in the same file.
 Installation never starts an agent or grants project membership. For Claude Code
 it also installs ClawBridge's hooks (Stop, PreCompact, SessionStart) in the
 project's `.claude/settings.local.json`; `--hooks local|user|project-shared|none`
-chooses where. The Stop hook sends a turn back once when messages wait unacked.
+chooses where. With `--config FILE` they go to the project you run the command in, not
+beside FILE, or to `--settings-dir DIR`; Claude Code must run in that folder. The Stop hook sends a turn back once when messages wait unacked.
 On Windows the hooks are written in Claude Code's exec form (`command` plus
 `args`, no shell), pending the Windows probe; `clawbridge doctor` shows the hook
 form and the Claude Code version.

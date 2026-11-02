@@ -62,6 +62,16 @@
   echoing it. `clawbridge cloud bootstrap` already makes such codes; anything else that passes a code must draw it from
   a cryptographic random generator. No schema change. Linear config scope: none.
 
+## Notifications
+
+- **A notifier whose sign-in route changed says so.** The saved notification state is tied to the sign-in route, which
+  includes the old Google settings in `config.toml` and the `CLAWBRIDGE_AUDIENCE`/`CLAWBRIDGE_OAUTH_*` environment.
+  Removing them after upgrading to 1.0 (as 1.0 advises) made each `clawbridge notify` started afterwards refuse with
+  the generic "corrupt or mismatched notification state". It now says the state was saved under a different sign-in
+  route, names the state file, and says to delete it (it holds only the checkpoint) or start with a new `--state`
+  file; any other mismatch keeps the generic message. A new state may type one extra "call inbox" hint, and nothing is
+  lost. No schema change. Linear config scope: none.
+
 ## Fixes
 
 - **`doctor` on a machine where ClawBridge was never set up gives one answer.** With no profile file and no route from

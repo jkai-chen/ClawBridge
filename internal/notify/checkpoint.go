@@ -109,8 +109,18 @@ func openCheckpoint(path string, b Binding) (*checkpointFile, checkpoint, error)
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var extra any
-	if !validFields || dec.Decode(&persisted) != nil || dec.Decode(&extra) != io.EOF || persisted.Version != 1 || !reflect.DeepEqual(persisted.Binding, b) || !persisted.Scope.valid() || persisted.After < 0 || persisted.After > MaxSequence {
+	wellFormed := validFields && dec.Decode(&persisted) == nil && dec.Decode(&extra) == io.EOF && persisted.Version == 1 && persisted.Scope.valid() && persisted.After >= 0 && persisted.After <= MaxSequence
+	if !wellFormed || !reflect.DeepEqual(persisted.Binding, b) {
 		f.close()
+		// Name a changed sign-in route only when everything else matches, so a
+		// different principal, instance or damaged state keeps the generic refusal.
+		if wellFormed {
+			other := persisted.Binding
+			other.Authority = b.Authority
+			if reflect.DeepEqual(other, b) {
+				return nil, state, fmt.Errorf("notification state %q was saved under a different sign-in route (for example before the old Google settings were removed from config.toml or the environment); delete it (it holds only the notifier's checkpoint) or start the notifier with a new --state file", path)
+			}
+		}
 		return nil, state, errors.New("corrupt or mismatched notification state; inspect it rather than retargeting")
 	}
 	return f, persisted, nil

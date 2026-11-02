@@ -56,6 +56,14 @@ new arrivals; unchanged unread messages do not produce repeating reminders.
 The private checkpoint survives restart and is tied to the exact authority,
 recipient and instance. Only one watcher may use a checkpoint at a time.
 
+The state is also tied to the sign-in route. Removing the old Google settings
+(`config.toml` or the `CLAWBRIDGE_AUDIENCE`, `CLAWBRIDGE_OAUTH_*` and related
+environment variables) after upgrading to 1.0 changes that route, and the
+notifier then refuses with "notification state PATH was saved under a different
+sign-in route". Delete that state file (it holds only the notifier's
+checkpoint) or start each notifier with a new `--state` file. The new state may
+type one extra "call inbox" hint, and nothing is lost.
+
 ## Codex queue adapter
 
 Choose the existing Codex thread UUID that is configured for this same ClawBridge

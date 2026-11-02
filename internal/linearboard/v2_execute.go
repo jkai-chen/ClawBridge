@@ -104,15 +104,24 @@ func (s *Service) ExecuteV2(ctx context.Context, scope bus.Request, operation st
 	case "issue":
 		resolve, _ := args["resolve_labels"].(bool)
 		if comments, _ := args["comments"].(bool); comments {
-			return s.IssueV2WithComments(ctx, scope, text("id"), CommentsInputV2{Since: text("comments_since"), ResolveLabels: resolve})
+			out, err := s.IssueV2WithComments(ctx, scope, text("id"), CommentsInputV2{Since: text("comments_since"), ResolveLabels: resolve})
+			if err == nil {
+				s.WithIntakeText(ctx, scope, &out.IssueV2)
+			}
+			return out, err
 		}
 		if _, ok := args["comments_since"]; ok {
 			return nil, errors.New("comments_since requires comments: true")
 		}
+		read := s.IssueV2
 		if resolve {
-			return s.IssueV2ResolvedLabels(ctx, scope, text("id"))
+			read = s.IssueV2ResolvedLabels
 		}
-		return s.IssueV2(ctx, scope, text("id"))
+		issue, err := read(ctx, scope, text("id"))
+		if err == nil {
+			s.WithIntakeText(ctx, scope, &issue)
+		}
+		return issue, err
 	case "issue_history":
 		in := IssueHistoryInputV2{Cursor: text("cursor")}
 		if _, ok := args["limit"]; ok {

@@ -779,7 +779,8 @@ var operationArgs = map[string]string{
 	"intake_token_revoke":          "instance token_id",
 	"intake_list":                  "instance state",
 	"intake_dismiss":               "instance issue_uuid",
-	"intake_rearm":                 "instance issue_uuid",
+	"intake_rearm":                 "instance issue_uuid updated_at agent_marker",
+	"intake_text_status":           "instance issue_uuid",
 	"linear_view_record":           "instance action kind view_id team_id name filter filter_sha256 filter_as_of agent_filter uses expected_binding_revision expected_filter_as_of old_filter_sha256",
 	"linear_view_forget":           "instance view_id expected_filter_as_of",
 	"linear_view_get":              "instance view_id",
@@ -1078,7 +1079,7 @@ func pureRead(r Request) bool {
 	switch r.Operation {
 	case "snapshot", "inbox_status", "notification_status", "taskboard_get", "taskboard_get_v2", "taskboard_access", "list_projects", "list_members", "comment_watch_status", "webhook_status", "label_policy_get", "status_policy_get", "doc_policy_get", "dispatcher_get", "context_watch_get", "health_get", "doc_seed_get", "doc_publication_get", "invite_list", "device_list", "device_events", "user_list", "owner_transfer_get", "dispatcher_chat_show", "dispatcher_decisions_list", "dispatcher_escalations_list", "dispatcher_model_doctor", "project_overview", "dispatcher_model_config", "marker_status":
 		return true
-	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get", "project_team_add_list":
+	case "list_sessions", "history", "whoami", "linear_comments_posted", "linear_comment_precheck", "intake_policy_get", "intake_trust_list", "intake_list", "intake_text_status", "linear_view_get", "linear_views_list", "project_kind_get", "team_roles_get", "lane_pins_get", "project_team_add_list":
 		// Naming a session with its instance makes it a heartbeat read: the
 		// read itself is pure and the heartbeat follows (see beat).
 		return (r.Session == "") == (str(r.Args, "instance") == "")

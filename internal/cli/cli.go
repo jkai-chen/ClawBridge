@@ -548,6 +548,9 @@ flags:`)
 		case "dismiss ", "rearm ":
 			op = "intake_" + sub
 			arityMin, arityMax = 1, 1
+			if sub == "rearm " {
+				f.Bool("confirm", false, "vouch for the issue's title and description as shown, without asking")
+			}
 		default:
 			return usage
 		}
@@ -1251,6 +1254,9 @@ flags:`)
 			a["link_email"] = who
 		}
 	}
+	if op == "intake_rearm" {
+		vouchRearm(ctx, config, executor, a, f.Lookup("confirm").Value.(flag.Getter).Get().(bool), closesStdin, stderr)
+	}
 	if op == "assignment_propose" {
 		if e := resolveProposeIssue(ctx, config, executor, a); e != nil {
 			return e
@@ -1293,6 +1299,9 @@ flags:`)
 		delete(data, "token")
 		data["token_file"] = secret.path
 		data["note"] = "Wrote the token to " + secret.path + " (0600): put it in Linear's MCP server header Authorization: Bearer <token>, then delete the file."
+	}
+	if op == "intake_rearm" {
+		rearmNote(stderr, result)
 	}
 	if op == "intake_trust_add" {
 		trustLinkNote(stderr, a, result)

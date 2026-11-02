@@ -1445,11 +1445,22 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if history {
 			data, err = issueHistoryRead(service, bounded, scope, pos[0], linearboard.IssueHistoryInputV2{Limit: v.limit, Cursor: v.cursor})
 		} else if v.comments {
-			data, err = service.IssueV2WithComments(bounded, scope, pos[0], linearboard.CommentsInputV2{Since: v.commentsSince, ResolveLabels: v.resolveLabels})
-		} else if v.resolveLabels {
-			data, err = service.IssueV2ResolvedLabels(bounded, scope, pos[0])
+			var out linearboard.IssueCommentsV2
+			if out, err = service.IssueV2WithComments(bounded, scope, pos[0], linearboard.CommentsInputV2{Since: v.commentsSince, ResolveLabels: v.resolveLabels}); err == nil {
+				service.WithIntakeText(bounded, scope, &out.IssueV2)
+			}
+			data = out
 		} else {
-			data, err = service.IssueV2(bounded, scope, pos[0])
+			var issue linearprovider.IssueV2
+			if v.resolveLabels {
+				issue, err = service.IssueV2ResolvedLabels(bounded, scope, pos[0])
+			} else {
+				issue, err = service.IssueV2(bounded, scope, pos[0])
+			}
+			if err == nil {
+				service.WithIntakeText(bounded, scope, &issue)
+			}
+			data = issue
 		}
 	case "states":
 		data, err = service.StatesV2(bounded, scope, pos[0])

@@ -19,6 +19,9 @@ type pgIdentityFixture struct {
 	workspace string
 	// lastJoined is the key of a device a test joined, when it needs it later.
 	lastJoined string
+	// ownerDevice is the device the owner enrolled to change a binding, the
+	// way a person does in their own terminal.
+	ownerDevice string
 }
 
 // newPGIdentityFixture opens the reviewer's disposable Postgres with a fresh
@@ -42,7 +45,30 @@ func newPGIdentityFixture(t *testing.T) *pgIdentityFixture {
 }
 
 func (f *pgIdentityFixture) as(principal, subject string, r Request) (Result, error) {
-	return f.s.ExecuteAsIdentity(context.Background(), Identity{Principal: principal, Issuer: GoogleIssuer, Subject: subject}, r)
+	identity := Identity{Principal: principal, Issuer: GoogleIssuer, Subject: subject}
+	if bindingWriteOp(r.Operation) && principal == f.owner && subject == "sub-owner" {
+		// A binding is changed by a person on their own device, without a
+		// session.
+		if f.ownerDevice == "" {
+			key := newKey(f.t)
+			if _, err := f.s.ExecuteAsIdentity(context.Background(), identity, Request{Operation: "device_enroll", Workspace: f.workspace, Args: map[string]any{"public_key": key, "label": "owner binding", "key_store": "keyring"}}); err != nil {
+				f.t.Fatal(err)
+			}
+			f.ownerDevice = keyID(f.t, key)
+		}
+		identity = Identity{Principal: principal, Issuer: DeviceIssuer, Subject: f.ownerDevice}
+		r.Session = ""
+		if r.Args != nil {
+			args := map[string]any{}
+			for k, v := range r.Args {
+				if k != "instance" {
+					args[k] = v
+				}
+			}
+			r.Args = args
+		}
+	}
+	return f.s.ExecuteAsIdentity(context.Background(), identity, r)
 }
 
 func (f *pgIdentityFixture) must(principal, subject string, r Request) Result {
@@ -459,6 +485,7 @@ func TestPostgresEveryHostedOperationRequiresTheBoundAccount(t *testing.T) {
 		"taskboard_clear":     {"expected_revision": 0},
 		"taskboard_clear_v2":  {"expected_revision": 0},
 		"taskboard_names_set": {"expected_revision": 0},
+		"taskboard_lanes_set": {"expected_revision": 0, "unpinned": "read_only"},
 	}
 	ops := make([]string, 0, len(operationArgs))
 	for op := range operationArgs {

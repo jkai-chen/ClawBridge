@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -71,5 +72,63 @@ func TestPostgresLanePins(t *testing.T) {
 	got, err := as("member", Request{Operation: "lane_pins_get", Args: map[string]any{}})
 	if err != nil || asInt(got.Data.(map[string]any)["revision"]) != 1 {
 		t.Fatal(got, err)
+	}
+}
+
+// On the hosted authority a binding is changed only by the project owner or
+// a lead, without a session, from their own device key: a Google sign-in, a
+// session and a member are each refused, and the narrow lanes operation
+// follows the same rule.
+func TestPostgresBindingChangesNeedThePersonsDevice(t *testing.T) {
+	f := newPGIdentityFixture(t)
+	device, people := map[string]string{}, map[string]string{}
+	for _, role := range []string{"lead", "member"} {
+		p := newID(role) + "@identity-test.example"
+		code := f.invite(f.owner, p, role)["code"].(string)
+		key := newKey(t)
+		if _, err := f.join(p, code, key); err != nil {
+			t.Fatal(err)
+		}
+		people[role], device[role] = p, keyID(t, key)
+	}
+	as := func(role string, r Request) (Result, error) {
+		r.Workspace, r.Project = f.workspace, "p"
+		return f.asDevice(people[role], device[role], r)
+	}
+	if _, err := as("lead", Request{Operation: "taskboard_set_v2", Args: taskboardArgsLanes(0)}); err != nil {
+		t.Fatal("a lead on their device was refused:", err)
+	}
+	// The workspace owner signing in with Google, not a device, is refused.
+	google := func(op string, a map[string]any) error {
+		_, err := f.s.ExecuteAsIdentity(context.Background(), Identity{Principal: f.owner, Issuer: GoogleIssuer, Subject: "sub-owner"}, Request{Operation: op, Workspace: f.workspace, Project: "p", Args: a})
+		return err
+	}
+	lanes := map[string]any{"expected_revision": 1, "unpinned": "one"}
+	for op, a := range map[string]map[string]any{
+		"taskboard_set_v2":    taskboardArgsLanes(1),
+		"taskboard_lanes_set": lanes,
+		"taskboard_clear_v2":  {"expected_revision": 1},
+	} {
+		if err := google(op, a); !refusedWith(err, "signed-in device") {
+			t.Fatal(op, "from a Google sign-in:", err)
+		}
+		if _, err := as("member", Request{Operation: op, Args: a}); err == nil {
+			t.Fatal(op, "from a member")
+		}
+	}
+	// A session is refused even on the lead's device.
+	if _, err := as("lead", Request{Operation: "register_session", Session: "s", Args: map[string]any{"instance": "s-i", "role": "worker"}}); err != nil {
+		t.Fatal(err)
+	}
+	withSession := map[string]any{"instance": "s-i", "expected_revision": 1, "unpinned": "one"}
+	if _, err := as("lead", Request{Operation: "taskboard_lanes_set", Session: "s", Args: withSession}); !refusedWith(err, "own terminal") {
+		t.Fatal("a session set the lanes:", err)
+	}
+	out, err := as("lead", Request{Operation: "taskboard_lanes_set", Args: lanes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := ParseTaskboardBindingV2(out.Data); err != nil || b.Unpinned != "one" || b.Revision != 2 {
+		t.Fatal(b, err)
 	}
 }

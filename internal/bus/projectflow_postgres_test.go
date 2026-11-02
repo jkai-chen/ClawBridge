@@ -25,7 +25,7 @@ func TestPostgresProjectFlowResumeIsTheOwnersOrALeads(t *testing.T) {
 	s.SetProjectFlowProven(true)
 	w := newID("unit_")
 	exec := func(principal, op string, a map[string]any) error {
-		_, e := s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: "p", Args: a})
+		_, e := executeAs(ctx, s, principal, Request{Operation: op, Workspace: w, Project: "p", Args: a})
 		return e
 	}
 	must := func(principal, op string, a map[string]any) {

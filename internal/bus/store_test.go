@@ -34,9 +34,24 @@ func newHarness(t *testing.T) *harness {
 	}
 	return h
 }
+
+// bindingWriteOp: a binding change is a person's, so the harness sends it
+// without a session, as the CLI does.
+func bindingWriteOp(op string) bool {
+	switch op {
+	case "taskboard_set", "taskboard_clear", "taskboard_set_v2", "taskboard_clear_v2", "taskboard_names_set", "taskboard_lanes_set":
+		return true
+	}
+	return false
+}
+
 func (h *harness) request(op, session string, a map[string]any) Request {
 	if a == nil {
 		a = map[string]any{}
+	}
+	if bindingWriteOp(op) {
+		session = ""
+		delete(a, "instance")
 	}
 	if session != "" && op != "register_session" {
 		if _, ok := a["instance"]; !ok {

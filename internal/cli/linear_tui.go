@@ -37,6 +37,21 @@ func newLinearTUISource(c Config, executor linearboard.Executor) (tui.LinearSour
 	return &linearTUISource{directory: directory, manager: newLinearManager(directory), executor: executor, scope: scope, authority: linearAuthority(c)}, nil
 }
 
+// personScope is the scope for a binding change from the TUI: the person's
+// own, so without the session or instance the TUI may be opened with. The
+// authority refuses a binding change that carries a session.
+func (s *linearTUISource) personScope() bus.Request {
+	scope := s.scope
+	scope.Session = ""
+	scope.Args = map[string]any{}
+	for k, v := range s.scope.Args {
+		if k != "instance" {
+			scope.Args[k] = v
+		}
+	}
+	return scope
+}
+
 // tuiClosesAllowed refuses, before anything is sent, a confirmed link that
 // changes who closes from a TUI bound to a session, or run under an
 // agent's environment: who closes is a person's decision (A3 §10.8).
@@ -163,7 +178,11 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		if err := tuiClosesAllowed(s.scope, input); err != nil {
 			return data, err
 		}
-		result, err := service.LinkV2(ctx, s.scope, input)
+		scope := s.scope
+		if r.Operation == "link" {
+			scope = s.personScope()
+		}
+		result, err := service.LinkV2(ctx, scope, input)
 		if err != nil {
 			return data, err
 		}
@@ -209,10 +228,14 @@ func (s *linearTUISource) Do(ctx context.Context, r tui.LinearRequest) (tui.Line
 		data.CancelKindsView = &view
 		return data, nil
 	case "names-refresh":
-		_, err := service.RefreshNamesV2(ctx, s.scope)
+		_, err := service.RefreshNamesV2(ctx, s.personScope())
 		return data, err
 	case "unlink-preview", "unlink":
-		result, err := service.UnlinkV2(ctx, s.scope, r.ExpectedRevision, r.Confirm)
+		scope := s.scope
+		if r.Confirm {
+			scope = s.personScope()
+		}
+		result, err := service.UnlinkV2(ctx, scope, r.ExpectedRevision, r.Confirm)
 		if err != nil {
 			return data, err
 		}

@@ -227,19 +227,47 @@ func (v *repeatedIDs) String() string     { return strings.Join(*v, ",") }
 func (v *repeatedIDs) Set(s string) error { *v = append(*v, s); return nil }
 func (v *repeatedIDs) Get() any           { return []string(*v) }
 
-// laneFlags reads --lane NAME=TEAM[,TEAM...]: the lane's write teams, the
-// first its default. The binding's rules are checked by the link.
+// laneFlags reads --lane NAME=TEAM[,TEAM...][:DEFAULT]: the lane's write
+// teams, the first its default unless :DEFAULT names another. The binding's
+// rules are checked by the authority.
 func laneFlags(flags []string) ([]bus.Lane, error) {
 	var lanes []bus.Lane
 	for _, f := range flags {
 		name, teams, ok := strings.Cut(f, "=")
+		teams, def, hasDefault := strings.Cut(teams, ":")
 		ids := strings.Split(teams, ",")
-		if !ok || name == "" || teams == "" {
-			return nil, errors.New("--lane is NAME=TEAM[,TEAM...], the first team its default")
+		if !ok || name == "" || teams == "" || hasDefault && def == "" {
+			return nil, errors.New("--lane is NAME=TEAM[,TEAM...][:DEFAULT], the first team its default unless :DEFAULT names one")
 		}
-		lanes = append(lanes, bus.Lane{Name: name, WriteTeamIDs: ids, DefaultTeamID: ids[0]})
+		if !hasDefault {
+			def = ids[0]
+		}
+		lanes = append(lanes, bus.Lane{Name: name, WriteTeamIDs: ids, DefaultTeamID: def})
 	}
 	return lanes, nil
+}
+
+// confirmFlagSet reports whether args carry --confirm (or -confirm) set true.
+func confirmFlagSet(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "--confirm", "-confirm", "--confirm=true", "-confirm=true", "--confirm=1", "-confirm=1", "--confirm=t", "-confirm=t", "--confirm=TRUE", "-confirm=TRUE", "--confirm=True", "-confirm=True":
+			return true
+		}
+	}
+	return false
+}
+
+// binderScope makes the scope of a binding change the person's own: a
+// --session is refused here (the server refuses a session named any other
+// way), and one only a config file supplies is dropped, as for lane pins.
+func binderScope(flags Config, scope *bus.Request) error {
+	if flags.Session != "" {
+		return errors.New(bus.BindingPersonOnly)
+	}
+	scope.Session = ""
+	delete(scope.Args, "instance")
+	return nil
 }
 func linearDirectory() (string, error) {
 	home, err := stateHome()
@@ -505,8 +533,9 @@ func parseLinear(command string, args []string, stderr io.Writer) (linearFlags, 
 	case "lanes":
 		f.StringVar(&v.pinSession, "pin-session", "", "pin, unpin: the session name to pin")
 		f.StringVar(&v.pinPrincipal, "pin-principal", "", "pin, unpin: the principal (email) whose sessions to pin")
-		f.StringVar(&v.laneName, "lane", "", "pin: the lane")
-		f.Int64Var(&v.revision, "expected-revision", -1, "pin, unpin: the pins' revision you last read (0 for none)")
+		f.Var((*repeatedIDs)(&v.lanes), "lane", "pin: the lane; set: NAME=TEAM[,TEAM...][:DEFAULT] (repeat up to 10), the lanes that replace the binding's")
+		f.StringVar(&v.unpinned, "unpinned", "", "set: the lane of a session with no pin, or read_only")
+		f.Int64Var(&v.revision, "expected-revision", -1, "pin, unpin: the pins' revision you last read (0 for none); set: the binding's revision from linear binding")
 		f.BoolVar(&v.confirm, "confirm", false, "pin, unpin: commit the displayed preview")
 	case "kind":
 		f.StringVar(&v.team, "team", "", "set: the bound team UUID the group belongs to (default: the binding's default team)")
@@ -1122,7 +1151,7 @@ var linearInternalCommands = map[string]string{
 
 func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) (err error) {
 	if len(args) == 0 || len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|cancel|duplicate|move|watch|webhook-setup\nCancel or mark Duplicate: cancel ISSUE --reason TEXT --operation-id ID; duplicate ISSUE --of ISSUE2 [--reason TEXT] --operation-id ID. An agent only in a Linear project of a kind the project owner or a lead allowed (cancel-kinds set), through a hosted server with the ClawBridge Linear app; never a completed or canceled issue; then release without an outcome.\nYour own connection: connect --name NAME --access read|write [--key-store keyring|file]; it is kept in the OS key store, or with --key-store file (where there is no OS key store; your choice, at your terminal) in a 0600 file: anyone who can read it as you can act as you in Linear. status --profile ID shows which.\nA project's milestones (any member): milestone list PROJECT_UUID --profile P [--json] (--profile is required). An issue's milestone: create ... --milestone MILESTONE_UUID, update ISSUE --milestone MILESTONE_UUID (an ID from that list, in the issue's own project; a name is never sent). Clearing one is not available yet (--clear-milestone is refused, nothing sent).\nWho changed an issue (hosted, read by the server's ClawBridge Linear app; any member): issue history ISSUE [--profile P] [--limit N] [--cursor C], newest first; history comes first, before the issue.\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nA Linear project's priority and dates: project update PROJECT_UUID [--priority P] [--target-date D|--clear-target-date] [--start-date D|--clear-start-date] --operation-id ID [--confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal).\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session). A lead's status-policy set may change only closes and agent_may_cancel_kinds.\nWho may cancel issues: cancel-kinds show (any member); cancel-kinds set --kinds A[,B]|--none --expected-revision N (project owner or lead, own terminal, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear webhooks (hosted; read-only): webhook-setup [--project SLUG] prints, for each bound write team, the team webhook the owner creates in Linear's UI (its URL, Issues and Comments, this team only) and the env line's shape with <secret>.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
+		_, err := io.WriteString(stdout, "clawbridge linear connect|import|profiles|status|logout|teams|projects|binding|link|seed-docs|unlink|names-refresh|context|issues|issue|states|labels|members|create|update|comment|relation|cancel|duplicate|move|watch|webhook-setup\nCancel or mark Duplicate: cancel ISSUE --reason TEXT --operation-id ID; duplicate ISSUE --of ISSUE2 [--reason TEXT] --operation-id ID. An agent only in a Linear project of a kind the project owner or a lead allowed (cancel-kinds set), through a hosted server with the ClawBridge Linear app; never a completed or canceled issue; then release without an outcome.\nYour own connection: connect --name NAME --access read|write [--key-store keyring|file]; it is kept in the OS key store, or with --key-store file (where there is no OS key store; your choice, at your terminal) in a 0600 file: anyone who can read it as you can act as you in Linear. status --profile ID shows which.\nA project's milestones (any member): milestone list PROJECT_UUID --profile P [--json] (--profile is required). An issue's milestone: create ... --milestone MILESTONE_UUID, update ISSUE --milestone MILESTONE_UUID (an ID from that list, in the issue's own project; a name is never sent). Clearing one is not available yet (--clear-milestone is refused, nothing sent).\nWho changed an issue (hosted, read by the server's ClawBridge Linear app; any member): issue history ISSUE [--profile P] [--limit N] [--cursor C], newest first; history comes first, before the issue.\nMove an issue to another bound team: move ISSUE_UUID --team UUID [--operation-id ID --confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner or a project lead (the ClawBridge project role) confirms from their own terminal, or the coordinator session within its lane.\nA Linear project's priority and dates: project update PROJECT_UUID [--priority P] [--target-date D|--clear-target-date] [--start-date D|--clear-start-date] --operation-id ID [--confirm --expected-plan-sha256 SHA]; without --confirm it is a preview. The project owner, a project lead or a team's lead in the team roles confirms from their own terminal, or the coordinator session (or a session of a team's lead) within its lane; anyone else previews and asks.\nProject owner only: label create|rename, project create [--kind NAME], initiative create|add-project, label-policy show|set, status-policy show|set, doc-policy set, health set|enable|disable, admin audit-replay.\nProject kinds (a project-label group such as Type): kind show (any member); kind set --values A,B,C [--group NAME] [--team UUID] --expected-revision N, then kind seed --operation-id ID --profile ID [--confirm] makes or adopts its project labels, and kind apply --file F --operation-id ID --profile ID [--confirm --canary] sets each project's kind (project owner, own terminal).\nA coordinator's projects: the project's designated coordinator session (while the dispatcher is on, a domain's) runs project create NAME --team UUID --kind NAME --operation-id ID in its lane's default team; project creates lists them and the unconfirmed ones (any member); project creates --ack OPERATION_ID (project owner, own terminal) clears one you checked in Linear.\nLinear writes that may have happened, of every kind (a create, a move, a team added; unsettled or uncertain), and issue writes (create, update, comment, relation) this machine or the server holds uncertain: writes (any member); writes --ack OPERATION_ID (project owner, or the project lead who confirmed it; own terminal; your own issue writes too) clears one you checked in Linear, a family's with its sub-issues.\nLanes (a binding's --lane NAME=TEAM,…): lanes show (any member); lanes pin --pin-session NAME|--pin-principal EMAIL --lane NAME --expected-revision N [--confirm], lanes unpin … (project owner, own terminal); lanes set --lane NAME=TEAM[,TEAM...][:DEFAULT] [--unpinned NAME|read_only] --expected-revision N changes only the binding's lanes (project owner or lead, own terminal, never a session).\nThe binding (link --confirm, unlink --confirm, names-refresh, lanes set) is changed in your own terminal, never from an agent session.\nTeam roles (who leads each bound team; lead, engineer or reviewer): roles show (any member); roles person|lead|set ... --expected-revision N [--confirm] (project owner, own terminal); roles project-lead on|off and roles apply-leads set Linear project leads from them. linear roles --help for more.\nShown names: names-refresh (project owner or lead, own terminal) stores the bound teams' and projects' current names, as Linear gives them to you.\nWho closes issues: closes show (any member); closes set (project owner or lead, never a session). A lead's status-policy set may change only closes and agent_may_cancel_kinds.\nWho may cancel issues: cancel-kinds show (any member); cancel-kinds set --kinds A[,B]|--none --expected-revision N (project owner or lead, own terminal, never a session).\nProject status follows the work (status policy project_flow): project-flow resume --linear-project UUID (project owner or lead, never a session) clears a hold.\nProject health (any member): health show.\nLinear webhooks (hosted; read-only): webhook-setup [--project SLUG] prints, for each bound write team, the team webhook the owner creates in Linear's UI (its URL, Issues and Comments, this team only) and the env line's shape with <secret>.\nWho hears of agents' issues (hosted, as the app): subscribers show (any member); subscribers on|off, owner on|off, add|remove LINEAR_USER_UUID, backfill --since DATE [--apply] (project owner or lead, never a session).\nLinear views (any member): view list [--team UUID] [--type issue|project], view show ID. Project owner, own terminal, with your Linear API key: view create --team UUID [--kind project]|update ID|delete ID|apply --file F [--adopt NAME].\nLinear documents (any member): doc list|get, initiative show, doc-policy show. Project owner or lead: doc publish FILE.\nYour name in agent markers: display-name set NAME|clear|capture --profile ID.\nYour Linear API key, for view writes (project owner, own terminal): key set|status|remove --profile ID.\nUse COMMAND --help for explicit flags. Token import accepts --token-stdin only.\n")
 		return err
 	}
 	command := args[0]
@@ -1165,7 +1194,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "doc-policy" && adminAction != "show" && adminAction != "set",
 		command == "label-policy" && adminAction != "show" && adminAction != "set",
 		command == "kind" && adminAction != "show" && adminAction != "set" && adminAction != "seed" && adminAction != "apply",
-		command == "lanes" && adminAction != "show" && adminAction != "pin" && adminAction != "unpin",
+		command == "lanes" && adminAction != "show" && adminAction != "pin" && adminAction != "unpin" && adminAction != "set",
 		command == "status-policy" && adminAction != "show" && adminAction != "set",
 		command == "closes" && adminAction != "show" && adminAction != "set",
 		command == "cancel-kinds" && adminAction != "show" && adminAction != "set",
@@ -1176,7 +1205,7 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		command == "view" && adminAction != "list" && adminAction != "show" && adminAction != "create" && adminAction != "update" && adminAction != "delete" && adminAction != "apply",
 		command == "subscribers" && adminAction != "show" && adminAction != "on" && adminAction != "off" && adminAction != "owner" && adminAction != "add" && adminAction != "remove" && adminAction != "backfill",
 		command == "admin" && adminAction != "audit-replay":
-		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, lanes show|pin|unpin, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set]|creates|update|team-adds, initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, cancel-kinds show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
+		return errors.New("use linear view list|show|create|update|delete|apply, subscribers show|on|off|owner|add|remove|backfill, lanes show|pin|unpin|set, doc list|get|publish, initiative show, doc-policy show|set, label create|rename, project create|status [set]|creates|update|team-adds, initiative create|add-project, label-policy show|set, kind show|set|seed|apply, status-policy show|set, closes show|set, cancel-kinds show|set, project-flow resume, health show|set|enable|disable, display-name set|clear|capture, key set|status|remove, or admin audit-replay")
 	}
 	connecting := command == "connect" || command == "login" || command == "import"
 	keyStore := ""
@@ -1216,6 +1245,12 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	if command == "view" {
 		parseAs = "view-" + adminAction
 	}
+	// A binding change is the person's own act: refused up front, before
+	// the arguments are parsed (link and names-refresh would otherwise ask
+	// for a profile first) and before any Linear or board call.
+	if flags.Session != "" && (command == "link" && confirmFlagSet(parseArgs) || command == "unlink" && confirmFlagSet(parseArgs) || command == "names-refresh" || command == "lanes" && adminAction == "set") {
+		return errors.New(bus.BindingPersonOnly)
+	}
 	v, pos, err := parseLinear(parseAs, parseArgs, stderr)
 	v.relationAction = relationAction
 	v.adminAction = adminAction
@@ -1242,6 +1277,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	}
 	if command == "cancel-kinds" && adminAction == "set" && ((strings.TrimSpace(v.cancelKinds) == "") == !v.cancelNone || v.revision < 0) {
 		return errors.New("cancel-kinds set requires one of --kinds A[,B] or --none, and --expected-revision from cancel-kinds show")
+	}
+	// A binding change is the person's own act: refused up front, before
+	// any profile or board is looked at.
+	if flags.Session != "" && (command == "link" && v.confirm || command == "unlink" && v.confirm || command == "names-refresh" || command == "lanes" && adminAction == "set") {
+		return errors.New(bus.BindingPersonOnly)
 	}
 	var writeInput linearboard.WriteInputV2
 	if command == "create" || command == "update" || command == "comment" {
@@ -1430,6 +1470,12 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		writeScopeLines(stderr, linearScopeView(resolved, scope))
 		data, err = service.BindingV2(bounded, scope)
 	case "link":
+		if v.confirm {
+			// The binding is the person's own act: never a session's.
+			if err = binderScope(flags, &scope); err != nil {
+				return err
+			}
+		}
 		in := linearboard.LinkInputV2{TeamIDs: v.teams, DefaultTeamID: v.defaultTeam, ProjectIDs: append([]string{}, v.projects...), ExpectedRevision: v.revision, TeamBoard: v.teamBoard, Confirm: v.confirm, MinimalPolicy: v.minimalPolicy, ParentTeamID: v.parentTeam, Unpinned: v.unpinned, TeamsWithoutProject: v.withoutProject}
 		if in.Lanes, err = laneFlags(v.lanes); err != nil {
 			return err
@@ -1466,6 +1512,11 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 	case "seed-docs":
 		data, err = service.SeedDocs(bounded, scope, seedInput(bounded, flags, v))
 	case "unlink":
+		if v.confirm {
+			if err = binderScope(flags, &scope); err != nil {
+				return err
+			}
+		}
 		if v.repair {
 			data, err = service.RepairUnlinkV2(bounded, scope, v.revision)
 		} else {
@@ -1477,6 +1528,9 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		out.Scope = linearScopeView(resolved, scope)
 		data = out
 	case "names-refresh":
+		if err = binderScope(flags, &scope); err != nil {
+			return err
+		}
 		data, err = service.RefreshNamesV2(bounded, scope)
 	case "issues":
 		data, err = service.IssuesV2(bounded, scope, linearboard.IssuesInputV2{Limit: v.limit, Cursor: v.cursor, LabelID: v.labelFilter, UpdatedAfter: v.updatedAfter})
@@ -1669,6 +1723,24 @@ func runLinear(ctx context.Context, flags Config, args []string, stdout, stderr 
 		if adminAction == "show" {
 			data, err = service.LanePins(bounded, scope)
 			break
+		}
+		if adminAction == "set" {
+			// The binding's lanes are the person's own act, as link is.
+			if err = binderScope(flags, &scope); err != nil {
+				return err
+			}
+			in := linearboard.LanesSetInput{Unpinned: v.unpinned, HaveLanes: len(v.lanes) > 0, Expected: v.revision}
+			if in.Lanes, err = laneFlags(v.lanes); err != nil {
+				return err
+			}
+			data, err = service.SetLanes(bounded, scope, in)
+			break
+		}
+		if len(v.lanes) > 1 {
+			return errors.New("lanes " + adminAction + " takes one --lane")
+		}
+		if len(v.lanes) == 1 {
+			v.laneName = v.lanes[0]
 		}
 		// Pins are the owner's own act: never a session's.
 		if flags.Session != "" {

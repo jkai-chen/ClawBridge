@@ -28,6 +28,14 @@
   Designating a session also lets it create Linear projects, set project status, priority and dates, add teams within
   its lane, and move issues between its lane's teams; the usage text and docs now say so. No schema change. Linear
   config scope: none.
+- **Changing a project's Linear binding is a person's action.** `linear link --confirm`, `linear unlink --confirm`
+  and `linear names-refresh` are refused from an agent session, and on a hosted server need the person's own signed-in
+  device (not a CI key). The refusal says to change the binding in your own terminal. The project owner or lead can
+  still do all of them from their terminal and the TUI. No schema change. Linear config scope: none.
+- **`clawbridge linear lanes set` changes only a binding's lanes.** `--lane NAME=TEAM[,TEAM...][:DEFAULT]` and
+  `--unpinned NAME|read_only` replace the lanes and the unpinned setting at the revision you read, and leave every
+  other field of the binding as it is; a stale revision is refused. It follows the same person-only rule, and history
+  records counts only. No schema change. Linear config scope: none.
 
 # ClawBridge v1.0.1 (released 3 Nov)
 

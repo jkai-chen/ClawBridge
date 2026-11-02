@@ -552,6 +552,9 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 		}
 		return s.setNames(ctx, tx, wid, pid, b, prevNames, a)
 	}
+	if op == "taskboard_lanes_set" {
+		return s.setLanes(ctx, tx, wid, pid, b, a)
+	}
 	v2 := strings.HasSuffix(op, "_v2")
 	if !v2 && unreadable == "" {
 		if _, e = legacyBinding(b); e != nil {
@@ -670,4 +673,63 @@ func (s *Store) taskboard(ctx context.Context, tx *transaction, wid, pid, role, 
 		}
 	}
 	return result(next)
+}
+
+// setLanes is taskboard_lanes_set: it replaces the lanes and/or the
+// unpinned setting of a linked binding, at the revision the caller read, and
+// leaves every other field of the stored binding as it is. The caller named
+// at least one; a field it leaves out keeps its stored value, so a lane
+// list sent alone keeps the unpinned setting while it still names a lane,
+// and unpinned sent alone is checked against the stored lanes. The audit
+// records counts, never a lane or team.
+func (s *Store) setLanes(ctx context.Context, tx *transaction, wid, pid string, b TaskboardBindingV2, a map[string]any) (any, error) {
+	if !b.Configured {
+		return nil, invalid("link the task board first; lanes belong to a link")
+	}
+	expected, err := taskboardExpected(a)
+	if err != nil {
+		return nil, err
+	}
+	if expected != b.Revision {
+		return nil, conflict(fmt.Sprintf("the binding changed: its current revision is %d; read it again (clawbridge linear binding) and retry", b.Revision))
+	}
+	rawLanes, haveLanes := a["lanes"]
+	rawUnpinned, haveUnpinned := a["unpinned"]
+	if !haveLanes && !haveUnpinned {
+		return nil, invalid("name lanes, unpinned or both")
+	}
+	args := map[string]any{}
+	if haveLanes {
+		args["lanes"] = rawLanes
+	} else {
+		args["lanes"] = LanesArg(b.Lanes)
+	}
+	next := b
+	next.Lanes, next.Unpinned = nil, ""
+	switch {
+	case haveUnpinned:
+		args["unpinned"] = rawUnpinned
+	case b.Unpinned != "":
+		args["unpinned"] = b.Unpinned
+	}
+	if list, ok := args["lanes"].([]any); ok && len(list) == 0 && !haveUnpinned {
+		delete(args, "unpinned")
+	}
+	if err = parseLanes(args, &next); err != nil {
+		return nil, invalid(err.Error())
+	}
+	next.Revision = expected + 1
+	next.UpdatedAt = stamp()
+	next.MappingVersion = next.WireVersion()
+	r, err := tx.ExecContext(ctx, `UPDATE taskboard_bindings SET revision=?,mapping=?,updated_at=? WHERE project_id=? AND revision=?`, next.Revision, asJSON(mappingMapV2(next)), next.UpdatedAt, pid, expected)
+	if err != nil {
+		return nil, err
+	}
+	if affected, _ := r.RowsAffected(); affected != 1 {
+		return nil, conflict("the binding changed; read it again (clawbridge linear binding) and retry")
+	}
+	if err = s.audit(ctx, tx, wid, pid, "", "taskboard_binding", pid, "lanes_set", map[string]any{"revision": next.Revision, "lanes": len(next.Lanes)}); err != nil {
+		return nil, err
+	}
+	return bindingMapV2(next), nil
 }

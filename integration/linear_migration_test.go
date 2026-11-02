@@ -89,7 +89,7 @@ func l1VersionTwoStore(t *testing.T, pg bool) *l1LegacyStore {
 		f.db = db
 		f.open = func() (*bus.Store, error) { return bus.OpenPostgres(context.Background(), dsn, pgOwner) }
 		f.execute = func(s *bus.Store, r bus.Request) (bus.Result, error) {
-			return s.ExecuteAs(context.Background(), pgOwner, r)
+			return executeAsPerson(context.Background(), s, pgOwner, r)
 		}
 		raw, err := os.ReadFile("testdata/linear-v2.postgres.sql")
 		if err != nil {

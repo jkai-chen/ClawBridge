@@ -23,7 +23,7 @@ func TestPostgresClosesSetIsTheOwnersOrALeads(t *testing.T) {
 	defer s.Close()
 	w := newID("unit_")
 	exec := func(principal, op string, a map[string]any) (any, error) {
-		r, e := s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: "p", Args: a})
+		r, e := executeAs(ctx, s, principal, Request{Operation: op, Workspace: w, Project: "p", Args: a})
 		return r.Data, e
 	}
 	must := func(principal, op string, a map[string]any) {

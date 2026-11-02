@@ -119,7 +119,9 @@ func TestTaskboardActorFenceAndTombstone(t *testing.T) {
 		t.Fatal(e)
 	}
 	h.call("taskboard_get", "a", nil)
-	h.fail("taskboard_set", "a", taskboardArgs(0))
+	if _, e := h.s.Execute(context.Background(), Request{Operation: "taskboard_set", Workspace: "w", Project: "p", Session: "a", Args: withInstance(taskboardArgs(0), "a-instance")}); e == nil {
+		t.Fatal("a retired session set the binding")
+	}
 	h.call("taskboard_clear", "", map[string]any{"expected_revision": 0})
 	b, e := ParseTaskboardBinding(h.call("taskboard_get", "", nil))
 	if e != nil || b.Configured || b.Revision != 1 {

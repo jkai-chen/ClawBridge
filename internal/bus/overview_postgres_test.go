@@ -31,7 +31,7 @@ func TestPostgresProjectOverviewPerRole(t *testing.T) {
 		if a == nil {
 			a = map[string]any{}
 		}
-		r, e := s.ExecuteAs(ctx, principal, Request{Operation: op, Workspace: w, Project: "p", Session: session, Args: a})
+		r, e := executeAs(ctx, s, principal, Request{Operation: op, Workspace: w, Project: "p", Session: session, Args: a})
 		m, _ := r.Data.(map[string]any)
 		return m, e
 	}

@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"clawbridge/internal/principal"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -648,6 +650,7 @@ var operationArgs = map[string]string{
 	"webhook_status":               "",
 	"taskboard_set_v2":             "instance expected_revision mode linear_team_ids linear_default_team_id linear_project_ids linear_workspace_id closes_pending linear_team_names linear_project_names linear_other_teams linear_parent_team_id lanes unpinned teams_without_project",
 	"taskboard_names_set":          "instance expected_revision linear_team_names linear_project_names",
+	"taskboard_lanes_set":          "instance expected_revision lanes unpinned",
 	"taskboard_clear_v2":           "instance expected_revision repair",
 	"taskboard_access":             "instance ledger engineer lane_scope lane_from coordinator_scope",
 	"project_create_reserve":       "instance operation_id team_id kind name_sha256",
@@ -956,7 +959,7 @@ func validateArgs(op string, a map[string]any) error {
 			}
 		}
 	}
-	if op == "taskboard_set" || op == "taskboard_clear" || op == "taskboard_set_v2" || op == "taskboard_clear_v2" || op == "taskboard_names_set" {
+	if op == "taskboard_set" || op == "taskboard_clear" || op == "taskboard_set_v2" || op == "taskboard_clear_v2" || op == "taskboard_names_set" || op == "taskboard_lanes_set" {
 		if _, err := taskboardExpected(a); err != nil {
 			return err
 		}
@@ -1603,7 +1606,7 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 		}
 		return healthRows(ctx, tx, pid)
 	}
-	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" || r.Operation == "taskboard_names_set" {
+	if r.Operation == "taskboard_access" || r.Operation == "taskboard_get" || r.Operation == "taskboard_set" || r.Operation == "taskboard_clear" || r.Operation == "taskboard_get_v2" || r.Operation == "taskboard_set_v2" || r.Operation == "taskboard_clear_v2" || r.Operation == "taskboard_names_set" || r.Operation == "taskboard_lanes_set" {
 		if r.Session == "" && str(a, "instance") != "" {
 			return nil, errors.New("instance requires session")
 		}
@@ -1671,11 +1674,18 @@ func (s *Store) execute(ctx context.Context, tx *transaction, r Request) (any, e
 			return out, nil
 		}
 		if r.Operation != "taskboard_get" && r.Operation != "taskboard_get_v2" && r.Operation != "taskboard_access" {
+			// The binding is a person's to change, in their own terminal.
+			if r.Session != "" {
+				return nil, scoped(BindingPersonOnly, "forbidden")
+			}
 			if projectRole != "owner" && projectRole != "lead" {
 				return nil, errors.New("project lead or owner permission required")
 			}
 			if actor != nil && actor["status"] != "active" {
 				return nil, errors.New("active actor permission required")
+			}
+			if s.postgres && (s.identity == nil || s.identity.Issuer != DeviceIssuer || principal.CI(s.principal)) {
+				return nil, scoped("the binding is changed only from a person's own signed-in device", "forbidden")
 			}
 		}
 		if actor != nil {

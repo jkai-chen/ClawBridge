@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 	"clawbridge/internal/linearapp"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -416,6 +418,7 @@ type awFixture struct {
 	writer    *AppWriter
 	mcp       *awMCP
 	api       *awLinearAPI
+	device    string
 }
 
 func (f *awFixture) identity() bus.Identity {
@@ -424,11 +427,46 @@ func (f *awFixture) identity() bus.Identity {
 
 func (f *awFixture) must(r bus.Request) bus.Result {
 	f.t.Helper()
-	out, err := f.store.ExecuteAsIdentity(context.Background(), f.identity(), r)
+	identity := f.identity()
+	switch r.Operation {
+	case "taskboard_set_v2", "taskboard_clear_v2", "taskboard_names_set", "taskboard_lanes_set":
+		// A binding is changed by a person on their own device, without a
+		// session.
+		identity, r = f.person(), withoutSession(r)
+	}
+	out, err := f.store.ExecuteAsIdentity(context.Background(), identity, r)
 	if err != nil {
 		f.t.Fatal(r.Operation, err)
 	}
 	return out
+}
+
+// person is the owner on a device key enrolled for binding changes.
+func (f *awFixture) person() bus.Identity {
+	f.t.Helper()
+	if f.device == "" {
+		pub, _, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		if _, err = f.store.ExecuteAsIdentity(context.Background(), f.identity(), bus.Request{Operation: "device_enroll", Workspace: f.workspace, Args: map[string]any{"public_key": devicekey.EncodePublicKey(pub), "label": "owner binding", "key_store": "keyring"}}); err != nil {
+			f.t.Fatal(err)
+		}
+		f.device = devicekey.ID(pub)
+	}
+	return bus.Identity{Principal: f.owner, Issuer: bus.DeviceIssuer, Subject: f.device}
+}
+
+func withoutSession(r bus.Request) bus.Request {
+	r.Session = ""
+	args := map[string]any{}
+	for k, v := range r.Args {
+		if k != "instance" {
+			args[k] = v
+		}
+	}
+	r.Args = args
+	return r
 }
 
 // newAWFixture opens the disposable Postgres with a fresh owner, workspace

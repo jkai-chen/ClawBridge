@@ -2,6 +2,7 @@ package linearboard
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"clawbridge/internal/bus"
+	"clawbridge/internal/devicekey"
 )
 
 // storeAuthority runs requests on a real bus store, as the local store or
@@ -38,13 +40,19 @@ func testAdminAuditReplayOnStore(t *testing.T, run func(context.Context, bus.Req
 	ctx := context.Background()
 	must := func(op string, a map[string]any) bus.Result {
 		t.Helper()
-		r, e := run(ctx, bus.Request{Operation: op, Workspace: workspace, Project: "p", Session: "own", Args: a})
+		session := "own"
+		if op == "taskboard_set_v2" {
+			// The binding is a person's: sent without a session.
+			session = ""
+			delete(a, "instance")
+		}
+		r, e := run(ctx, bus.Request{Operation: op, Workspace: workspace, Project: "p", Session: session, Args: a})
 		if e != nil {
 			t.Fatal(op, e)
 		}
 		return r
 	}
-	must("taskboard_set_v2", map[string]any{"instance": "own-i", "expected_revision": 0, "mode": "project_set", "linear_team_ids": []string{teamID, otherTeamID}, "linear_default_team_id": teamID, "linear_project_ids": []string{projectA, projectB}})
+	must("taskboard_set_v2", map[string]any{"expected_revision": 0, "mode": "project_set", "linear_team_ids": []string{teamID, otherTeamID}, "linear_default_team_id": teamID, "linear_project_ids": []string{projectA, projectB}})
 	s, _, p, _ := adminTest(t)
 	authority := &storeAuthority{run: run, failNext: true}
 	s.cfg.Executor = authority
@@ -54,7 +62,7 @@ func testAdminAuditReplayOnStore(t *testing.T, run func(context.Context, bus.Req
 	if e != nil || !strings.HasPrefix(r.Audit, "failed") || len(p.writes) != 1 {
 		t.Fatal(r, e)
 	}
-	must("taskboard_set_v2", map[string]any{"instance": "own-i", "expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{teamID, otherTeamID}, "linear_default_team_id": teamID, "linear_project_ids": []string{projectA, projectB, newProject}})
+	must("taskboard_set_v2", map[string]any{"expected_revision": 1, "mode": "project_set", "linear_team_ids": []string{teamID, otherTeamID}, "linear_default_team_id": teamID, "linear_project_ids": []string{projectA, projectB, newProject}})
 	if _, e := s.Admin(ctx, scope, in); e == nil || !strings.Contains(e.Error(), "different scoped payload") {
 		t.Fatal("a retry after the binding changed was not refused", e)
 	}
@@ -108,8 +116,26 @@ func TestAdminAuditReplayOnPostgres(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer store.Close()
+	google := bus.Identity{Principal: owner, Issuer: bus.GoogleIssuer, Subject: "sub-owner"}
+	var device string
 	run := func(ctx context.Context, r bus.Request) (bus.Result, error) {
-		out, e := store.ExecuteAsIdentity(ctx, bus.Identity{Principal: owner, Issuer: bus.GoogleIssuer, Subject: "sub-owner"}, r)
+		identity := google
+		if r.Operation == "taskboard_set_v2" {
+			// A binding is changed by a person on their own device.
+			if device == "" {
+				pub, _, e := ed25519.GenerateKey(nil)
+				if e != nil {
+					return bus.Result{}, e
+				}
+				enroll := bus.Request{Operation: "device_enroll", Workspace: r.Workspace, Args: map[string]any{"public_key": devicekey.EncodePublicKey(pub), "label": "binding", "key_store": "keyring"}}
+				if _, e = store.ExecuteAsIdentity(ctx, google, enroll); e != nil {
+					return bus.Result{}, e
+				}
+				device = devicekey.ID(pub)
+			}
+			identity = bus.Identity{Principal: owner, Issuer: bus.DeviceIssuer, Subject: device}
+		}
+		out, e := store.ExecuteAsIdentity(ctx, identity, r)
 		out.Source = "server"
 		return out, e
 	}

@@ -297,7 +297,8 @@ Use `--agent claude-code` for Claude Code (`--channel` adds the channel wake's
 turn hook: [notifications](notifications.md#wake-an-idle-agent-through-a-channel-claude-code);
 Codex refuses it). It writes `.mcp.json` in the current
 folder, so run it from the repository root; `--config ~/.claude.json` writes the
-user-level file instead. `--config` selects the agent file to
+user-level file instead. The hooks go to the project you run it in (or `--settings-dir DIR`),
+not beside a `--config` file kept elsewhere; Claude Code must run in that folder. `--config` selects the agent file to
 edit; `--client-config` selects the trusted ClawBridge profile. Without an explicit
 agent file, Codex uses `$CODEX_HOME/config.toml` or `~/.codex/config.toml`; Claude
 Code uses `.mcp.json` in the current directory. Conflicting entries fail; unrelated

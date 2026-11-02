@@ -81,6 +81,10 @@
 - Intake re-checks a lagging Linear history about two minutes later, as intended, instead of at the next watcher tick; a
   new claim reaches the dispatcher within about a minute. The watcher logs one line per tick so an idle watcher is
   visibly healthy. No schema change. Linear config scope: none.
+- **`mcp install --channel --config FILE` puts the turn hook where Claude Code reads it.** The hooks went beside the
+  config file, so a session using a separate MCP config file never got its channel turn hook. They now go to the
+  project you run the command in, or `--settings-dir`, with a line when that differs from the config file's folder,
+  and `doctor` warns when a channel entry's folder has no turn hook. No schema change. Linear config scope: none.
 
 ## Docs
 

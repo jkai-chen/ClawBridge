@@ -243,7 +243,7 @@ func TestMCPInstallChannel(t *testing.T) {
 	managed, config, ran := channelMachine(t)
 	dir := filepath.Dir(filepath.Dir(managed))
 	install := func(project string, extra ...string) (string, string, error) {
-		args := append([]string{"--session", "agent", "--instance", "inst-1", "--workspace", "w", "--project", "p", "mcp", "install", "--agent", "claude-code", "--config", filepath.Join(dir, project, ".mcp.json")}, extra...)
+		args := append([]string{"--session", "agent", "--instance", "inst-1", "--workspace", "w", "--project", "p", "mcp", "install", "--agent", "claude-code", "--config", filepath.Join(dir, project, ".mcp.json"), "--settings-dir", filepath.Join(dir, project)}, extra...)
 		return channelRun(t, args...)
 	}
 	_, errs, err := install("plain")

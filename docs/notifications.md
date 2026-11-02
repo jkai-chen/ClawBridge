@@ -246,7 +246,10 @@ keeps running beside it as the fallback.
    turn`), to the Stop, PreCompact and SessionStart hooks. It doesn't change the
    MCP entry. It then lists, on stderr, the setup steps still missing and the
    launch line; it reads Claude Code's settings but never edits them, and it
-   never runs `claude`. It is refused for `--agent codex` (Codex has no
+   never runs `claude`. The hooks go to the project you run the command in, or to
+   `--settings-dir DIR`, even when `--config FILE` is kept elsewhere (a line says
+   where, when that is not the config file's folder): Claude Code reads them from the
+   folder it runs in. `doctor` warns when a channel session has no turn hook there. It is refused for `--agent codex` (Codex has no
    channels; it keeps the notify adapter) and with `--hooks none`.
 
 4. **Launch Claude Code with the channel,** the session's name and instance

@@ -278,6 +278,10 @@ Run notify or host-status/host-wait only with the operator's explicit host mappi
 their command with the fixed text "N ClawBridge messages are waiting; call
 inbox". When that text arrives as your prompt, it is a system notice, not a
 request from a person: call `inbox` and handle what is there as usual.
+The notifier types only while the session's agent is running (it holds the notice
+otherwise; `--only-if` adds the operator's own check). When relaunching an agent
+in a pane a notifier types into, stop the notifier by its PID while the agent is
+down, press Ctrl-U to clear the line, relaunch, then restart the notifier.
 On Windows the operator starts the watcher with PowerShell `Start-Process
 -WindowStyle Hidden` or a per-user Task Scheduler "at log on" task, and the command
 adapter runs a program such as `powershell.exe -File wake.ps1 {text}` (no shell,

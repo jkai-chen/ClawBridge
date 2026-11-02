@@ -103,7 +103,9 @@ health.
    `CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE`; otherwise they use the checkout's
    `.clawbridge.toml` or `~/.clawbridge/config.toml`. Relaunching Claude Code by hand
    (`claude --resume`), export `CLAWBRIDGE_SESSION` and `CLAWBRIDGE_INSTANCE` in that
-   shell first: the context hooks bind only a session they can name. `clawbridge linear context`
+   shell first (stop the pane's notifier by its PID and press Ctrl-U to clear the line before
+   typing the relaunch, then restart it with the new terminal handle, since the liveness gate does not check the handle,
+   or use `--only-if` with the Orca recipe): the context hooks bind only a session they can name. `clawbridge linear context`
    shows the scope a shell command used and where each value came from
    ([references/cli.md](references/cli.md#shell-commands-and-the-mcp-servers-scope)). Call
    `register_session` when starting a new session, then `whoami` to confirm the

@@ -74,6 +74,10 @@ func Run(ctx context.Context, c Config) error {
 		c.HostTimeout = 10 * time.Second
 	}
 	path := ""
+	if err := prepareOnlyIf(&c); err != nil {
+		return err
+	}
+	c.gate = &gateState{said: -1}
 	if c.Binding.Adapter == "command" {
 		argv, err := resolveCommand(c.Binding.Command)
 		if err != nil {
@@ -379,6 +383,14 @@ func once(ctx context.Context, c Config, path string, f *checkpointFile, state *
 				return Permanent(errors.New("diagnostic output failed"))
 			}
 			return nil
+		}
+	}
+	// The command adapter types into a terminal: never when the session's
+	// agent isn't running or the --only-if precondition refuses (FR68). The
+	// checkpoint stays, so the batch is typed once the agent is live.
+	if c.Binding.Adapter == "command" {
+		if reason := holdReason(ctx, c); reason != "" {
+			return c.gate.hold(c, e, reason)
 		}
 	}
 	switch c.Binding.Adapter {

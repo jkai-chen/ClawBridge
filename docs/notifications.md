@@ -121,6 +121,87 @@ clawbridge --session reviewer --instance INSTANCE notify --adapter command --sta
 Typing into a terminal while the agent is busy queues the line as its next
 prompt in most hosts; check yours before you rely on it.
 
+### The notifier types only while the agent is running
+
+A terminal may hold a bare shell (the agent exited) or a half-typed relaunch
+command line, and the notice would be typed into it. So before each type the
+command adapter checks the session's queue record (`<session>.queue.json` in the
+context directory, which the session's MCP server writes every minute). It types
+only when all of these hold:
+
+- the record exists and is no more than 2 minutes old (twice the server's
+  refresh, so one missed write is tolerated);
+- the agent's process and its MCP server's process are both alive;
+- the MCP server is still that agent's child, which is the guard against a
+  reused process ID (the record stores no process start time). On a platform
+  where ClawBridge cannot read a process's parent, only the first two checks
+  run, so the gate cannot detect a reused process ID there.
+
+Otherwise the batch is held: nothing is typed, the checkpoint does not advance,
+and a `hint_held` line with `"reason":"agent_not_running"` is written to the
+watcher's diagnostics once for that batch, with no message content. The next
+poll or stream wake looks again (within the 5 s poll interval, or up to 60 s on
+an open stream), and the batch is typed once the agent is live. The gate needs
+the context directory, so it applies only where the hooks' context directory
+exists (the default `~/.clawbridge/context`, or `$CLAWBRIDGE_HOME/context`);
+with none, the adapter behaves as before. The json and codex adapters type
+nothing and are not gated.
+
+The gate proves the agent is running, not that the terminal being typed into
+still hosts it. After an Orca-style relaunch the agent comes back in a new pane
+with a new terminal handle. The old handle is left as a bare shell, the gate
+still passes, and the notifier keeps typing into its old `--terminal` handle.
+Only `--only-if` (the pane check in the Orca recipe below) covers this, or,
+later, the planned per-user notifier that re-resolves the terminal at send time.
+Until then, restart the notifier with the new handle after a relaunch.
+
+### `--only-if`: your own precondition
+
+```sh
+clawbridge --session reviewer --instance INSTANCE notify --adapter command --state /absolute/private/reviewer-command-notify.json --only-if /absolute/path/check-pane.sh --only-if-arg TERMINAL_HANDLE -- orca terminal send --terminal TERMINAL_HANDLE --text {text} --enter
+```
+
+`--only-if PROGRAM` (an absolute path, checked at startup) with a repeatable
+`--only-if-arg ARG` runs right before each type, after the gate above passes:
+no shell, no stdin, output discarded, 5 seconds at most. Exit 0 delivers. Any
+other exit, a timeout or a failure to run holds the batch the same way
+(`hint_held`, `"reason":"only_if_refused"`). The program sees
+`CLAWBRIDGE_SESSION`; ClawBridge's own secrets are removed from its environment.
+
+Orca recipe: refuse unless the pane's foreground process is your agent. Save this
+as `/absolute/path/check-pane.sh` and `chmod +x` it. Check the field names
+against your own `orca terminal list --json`; they are given here generically
+and must match what it prints.
+
+```sh
+#!/bin/sh
+# usage: check-pane.sh TERMINAL_HANDLE
+orca terminal list --json | python3 -c '
+import json, sys
+handle = sys.argv[1]
+data = json.load(sys.stdin)
+terms = data if isinstance(data, list) else data.get("terminals", [])
+for t in terms:
+    if t.get("handle") == handle:
+        # a bare shell reports the shell as its foreground process
+        fg = str(t.get("foregroundProcess", t.get("title", "")))
+        sys.exit(0 if "claude" in fg.lower() else 1)
+sys.exit(1)
+' "$1"
+```
+
+### Relaunching the agent under a running notifier
+
+Typing a relaunch command into a pane while the notifier runs can interleave
+with a notice. Until you rely on the gate and a `--only-if` check, stop the
+notifier by its PID while the agent is down, and clear the line first:
+
+1. Stop the notifier by its PID (`kill PID`; it is a foreground process, so use
+   the PID you started it with, never a pattern match).
+2. In the pane, press Ctrl-U to clear any half-typed line.
+3. Relaunch the agent (`claude --resume …`) and wait for it to start.
+4. Start the notifier again.
+
 ## Wake an idle agent through a channel (Claude Code)
 
 An idle Claude Code session can start a turn by itself when ClawBridge
@@ -472,7 +553,9 @@ in the project's `.claude/settings.local.json` (`--hooks none` leaves them out;
   start lifts the hold; until then its messages wait, and `clawbridge doctor`
   shows the hold.
 
-**Relaunching Claude Code by hand.** The hooks name the session from
+**Relaunching Claude Code by hand.** First stop the session's notifier by its PID
+(or let the gate hold it while the agent is down), and press Ctrl-U in the pane to
+clear any half-typed line; start the notifier again once the agent is up. The hooks name the session from
 `CLAWBRIDGE_SESSION` in Claude Code's own environment; without it they bind
 nothing, and `doctor` says the session is "not bound to a transcript". When you
 start or resume Claude Code yourself (`claude --resume …`) rather than from the

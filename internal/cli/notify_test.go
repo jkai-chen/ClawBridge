@@ -25,7 +25,11 @@ func TestNotificationCLIInvalidFlagsAndHelpHaveNoEffects(t *testing.T) {
 		{"notify", "--adapter", "command", "--state", filepath.Join(d, "state.json"), "--"},
 		{"notify", "--adapter", "json", "--state", filepath.Join(d, "state.json"), "--", "tmux"},
 		{"notify", "--adapter", "command", "--thread=x", "--state", filepath.Join(d, "state.json"), "--", "tmux"},
-		{"notify", "--adapter", "command", "--state", "relative", "--", "tmux"}} {
+		{"notify", "--adapter", "command", "--state", "relative", "--", "tmux"},
+		// --only-if: command adapter only, an absolute program, args need it.
+		{"notify", "--adapter", "command", "--only-if", "check.sh", "--state", filepath.Join(d, "state.json"), "--", "tmux"},
+		{"notify", "--adapter", "command", "--only-if-arg", "x", "--state", filepath.Join(d, "state.json"), "--", "tmux"},
+		{"notify", "--adapter", "json", "--only-if", filepath.Join(d, "check.sh"), "--state", filepath.Join(d, "state.json")}} {
 		var out, diag bytes.Buffer
 		err := Run(context.Background(), args, &out, &diag)
 		if len(args) == 2 {

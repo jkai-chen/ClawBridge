@@ -54,6 +54,7 @@ func commandConfig(t *testing.T, hints *int) Config {
 		return nil
 	}
 	c.ContextDir = t.TempDir()
+	liveAgent(t, &c)
 	c.Executor = executorFunc(func(_ context.Context, r bus.Request) (bus.Result, error) {
 		if r.Operation != "notification_status" {
 			return bus.Result{Data: map[string]any{}}, nil
@@ -102,6 +103,7 @@ func TestNotifySkipsForAConfirmedChannel(t *testing.T) {
 		case "another":
 			// Another session's confirmed channel doesn't count.
 			c.Binding.Session = "other-session"
+			liveAgent(t, &c)
 			channelState(t, c.ContextDir, nil)
 		case "no record":
 		default:

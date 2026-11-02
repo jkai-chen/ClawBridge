@@ -637,3 +637,46 @@ func TestUnknownOwnerIsBusy(t *testing.T) {
 		t.Errorf("Alias by an owner that can't be checked: %v", err)
 	}
 }
+
+func TestPreCheckMatchesClaimAndWritesNothing(t *testing.T) {
+	f := newFakeProcs(t)
+	dir := testRecordsDir(t)
+	a, b := f.add(fakeBase+1, 10), f.add(fakeBase+2, 20)
+	// Nothing there: it passes and creates nothing.
+	if _, found, err := PreCheck(dir, "web", convID(1), a, Hint{}); err != nil || found {
+		t.Fatalf("new name: %v %v", found, err)
+	}
+	if recs, _ := List(dir); len(recs) != 0 {
+		t.Fatalf("PreCheck wrote: %+v", recs)
+	}
+	if _, err := Claim(dir, "web", convID(1), a, "i", Hint{}); err != nil {
+		t.Fatal(err)
+	}
+	var inUse ErrInUse
+	if _, _, err := PreCheck(dir, "web", convID(1), b, Hint{}); !errors.As(err, &inUse) || inUse.PID != a.PID {
+		t.Fatalf("live owner: %v", err)
+	}
+	f.kill(a.PID)
+	if r, found, err := PreCheck(dir, "web", convID(1), b, Hint{}); err != nil || !found || r.Instance != "i" {
+		t.Fatalf("dead owner, known conversation: %+v %v %v", r, found, err)
+	}
+	if _, _, err := PreCheck(dir, "web", convID(2), b, Hint{}); !errors.Is(err, ErrBelongsToAnother) {
+		t.Fatalf("other conversation: %v", err)
+	}
+	if _, _, err := PreCheck(dir, "web", convID(2), b, Hint{AgentStartName: "web"}); err != nil {
+		t.Fatalf("with the start hint: %v", err)
+	}
+	if _, _, err := PreCheck(dir, "other", convID(1), b, Hint{}); !errors.Is(err, ErrConversationTaken) {
+		t.Fatalf("F8: %v", err)
+	}
+	if _, _, err := PreCheck(dir, "WEB", convID(3), b, Hint{}); !errors.Is(err, ErrNameCaseCollision) {
+		t.Fatalf("case: %v", err)
+	}
+	// No conversation: the no-link rules.
+	if _, _, err := PreCheck(dir, "web", "", b, Hint{}); !errors.Is(err, ErrBelongsToAnother) {
+		t.Fatalf("no link, record with conversations: %v", err)
+	}
+	if _, _, err := PreCheck(dir, "web", "", b, Hint{AgentStartName: "web"}); err != nil {
+		t.Fatalf("no link with the hint: %v", err)
+	}
+}

@@ -497,7 +497,7 @@ func (q *queue) save() {
 		return
 	}
 	r := ctxwatch.QueueRecord{Session: q.b.session, Workspace: q.b.workspace, Project: q.b.project, Instance: q.instance, Server: q.options.Server, DB: q.options.DB,
-		MCPPID: os.Getpid(), AgentPID: os.Getppid(), Stream: q.state, Leases: []ctxwatch.QueueLease{}, UpdatedAt: q.now().UTC().Format(time.RFC3339)}
+		MCPPID: os.Getpid(), AgentPID: q.agentPID(), Stream: q.state, Leases: []ctxwatch.QueueLease{}, UpdatedAt: q.now().UTC().Format(time.RFC3339)}
 	for id, l := range q.held {
 		r.Leases = append(r.Leases, ctxwatch.QueueLease{MessageID: id, LeaseID: l.LeaseID})
 	}
@@ -508,6 +508,23 @@ func (q *queue) save() {
 	slices.SortFunc(r.Leases, func(a, b ctxwatch.QueueLease) int { return strings.Compare(a.MessageID, b.MessageID) })
 	// Written under the lock, so close can't remove it before a late write.
 	_ = ctxwatch.SaveQueueRecord(dir, r)
+	q.mu.Unlock()
+}
+
+// agentPID is the agent process the record names: the one the link found in
+// runtime mode, else this process's parent.
+func (q *queue) agentPID() int {
+	if q.b.agentPID > 0 {
+		return q.b.agentPID
+	}
+	return os.Getppid()
+}
+
+// setRoute names the route the hooks' record carries, once a runtime-mode
+// server knows it.
+func (q *queue) setRoute(server, db string) {
+	q.mu.Lock()
+	q.options.Server, q.options.DB = server, db
 	q.mu.Unlock()
 }
 

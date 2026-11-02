@@ -201,6 +201,13 @@ func resolveConfigVariant(ctx context.Context, flags Config, variant func(Config
 	if err != nil {
 		return Config{}, "", err
 	}
+	return resolveConfigAt(ctx, home, flags, variant)
+}
+
+// resolveConfigAt is resolveConfigVariant for the home (state directory)
+// given, instead of the one CLAWBRIDGE_HOME or the user's home names.
+func resolveConfigAt(ctx context.Context, home string, flags Config, variant func(Config) Config) (Config, string, error) {
+	var err error
 	path := filepath.Join(home, "config.toml")
 	base := Config{}
 	sources := map[string]string{}

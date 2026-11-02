@@ -42,6 +42,14 @@
   against accidents; it is not a security boundary, as an agent can unset it. No schema change.
   Linear config scope: none.
 
+## Sessions
+
+- **Only `--session` pins `clawbridge mcp` to a session.** An MCP entry without `--session` no longer takes its
+  session from `CLAWBRIDGE_SESSION` or from a `session` set in `config.toml` or `.clawbridge.toml`. It now asks the
+  agent to claim a name, suggesting that one. That way an agent started from another agent's terminal can't run as
+  that agent's session. Entries that `clawbridge mcp install` wrote all carry `--session` and are unchanged. No
+  schema change. Linear config scope: none.
+
 # ClawBridge v1.0.1 (released 3 Nov)
 
 **ClawBridge 1.0.1** is a fixes release on 1.0.0. Intake holds an issue's title and description to what the trusted

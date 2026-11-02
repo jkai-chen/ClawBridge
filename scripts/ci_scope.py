@@ -29,7 +29,7 @@ WINDOWS_DIRS = [
     "internal/linearboard", "internal/linearconn", "internal/linearkey", "internal/linearpace",
     "internal/linearprovider", "internal/mcpserver", "internal/mirror", "internal/notify",
     "internal/outbox", "internal/playbook", "internal/principal", "internal/remote",
-    "internal/runner", "internal/secretenv", "internal/selfupdate", "internal/server",
+    "internal/runner", "internal/secretenv", "internal/selfupdate", "internal/server", "internal/sessions",
     "internal/setup", "internal/skill", "internal/transporterr", "internal/tui",
     "internal/uiflow", "internal/uiflow/onboarding", "internal/watcher",
 ]

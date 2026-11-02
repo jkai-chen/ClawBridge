@@ -34,6 +34,12 @@ type binding struct {
 	// board is the native Linear service, when this process has one; it lets
 	// assignment_propose resolve an issue_identifier given alone.
 	board TaskboardToolsV2
+	// rt is set only in runtime-identity mode: the session is resolved from the
+	// agent's link on the first tool call instead of being pinned (rt.go).
+	rt *runtime
+	// agentPID is the agent process the queue record names; 0 means this
+	// process's parent.
+	agentPID int
 }
 
 // Run serves a process pinned to one workspace, project, and session. Registration
@@ -100,7 +106,11 @@ func shellScopeSentence(workspace, project, session string) string {
 }
 
 func NewServerWithOptions(store Executor, workspace, project, session, instance string, options Options) *mcp.Server {
-	b := &binding{store: store, workspace: workspace, project: project, session: session, instance: instance}
+	return newServer(store, workspace, project, session, instance, options, nil)
+}
+
+func newServer(store Executor, workspace, project, session, instance string, options Options, rt *runtime) *mcp.Server {
+	b := &binding{store: store, workspace: workspace, project: project, session: session, instance: instance, rt: rt}
 	inbox := newInboxResource(b, options)
 	b.inbox = inbox
 	b.queue = newQueue(b, options)
@@ -112,6 +122,10 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 	}
 	if _, ok := options.Taskboard.(TaskboardToolsV2); ok {
 		instructions += "\n\nNative Linear V2: use the advertised *_v2 family for project-set boards and new board calls. Preserve exact operation IDs and payloads for retries. Treat unsupported_mapping as an explicit capability limit; never collapse a project set into a team board or change a retry payload to bypass it."
+	}
+	if rt != nil {
+		instructions = runtimeInstructions
+		rt.ctx = options.Context
 	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "clawbridge", Version: "0.1.0"}, &mcp.ServerOptions{
 		SubscribeHandler:   inbox.subscribe,
@@ -158,7 +172,7 @@ func NewServerWithOptions(store Executor, workspace, project, session, instance 
 			<-options.Context.Done()
 			b.queue.close()
 		}()
-		if c, ok := store.(outboxClient); ok {
+		if c, ok := store.(outboxClient); ok && rt == nil {
 			go c.DrainOutboxWhile(options.Context, outboxEvery)
 		}
 		if options.ContextDir != "" {
@@ -202,6 +216,11 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 		// can accidentally use a newly assigned instance belonging to another call.
 		b.mu.Lock()
 		defer b.mu.Unlock()
+		if b.rt != nil {
+			if result, done, err := b.rt.handle(ctx, b, operation, args); done {
+				return nil, result, err
+			}
+		}
 		if operation == "register_session" {
 			if name, ok := args["name"].(string); ok && name != "" && name != b.session {
 				return nil, bus.Result{}, errors.New("session name is pinned by the MCP configuration")
@@ -261,16 +280,23 @@ func add[In any](s *mcp.Server, b *binding, operation, description string, readO
 			if e != nil || json.Unmarshal(encoded, &registered) != nil || registered.Instance == "" {
 				return nil, bus.Result{}, fmt.Errorf("registration committed but its instance could not be bound; inspect the session with the CLI before retrying")
 			}
-			if registered.Instance != b.instance {
-				b.inbox.stop()
-				b.instance = registered.Instance
-				b.statusScope = notify.Scope{}
-				b.generation.Add(1)
-				b.queue.restart(b.instance)
-			}
+			b.bindInstance(registered.Instance)
 		}
 		return nil, result, nil
 	})
+}
+
+// bindInstance makes instance the one this server acts as, restarting what
+// depends on it. The caller holds b.mu.
+func (b *binding) bindInstance(instance string) {
+	if instance == b.instance {
+		return
+	}
+	b.inbox.stop()
+	b.instance = instance
+	b.statusScope = notify.Scope{}
+	b.generation.Add(1)
+	b.queue.restart(b.instance)
 }
 
 type emptyInput struct{}

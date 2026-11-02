@@ -182,7 +182,9 @@ func TestPhase3CommandOutputsAndTempArtifactsDoNotLeakSecrets(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		if err := cmd.Run(); err == nil {
+		// mcp without --session runs in runtime mode and exits cleanly on
+		// the empty stdin; it used to refuse. The scan below still applies.
+		if err := cmd.Run(); err == nil && args[0] != "mcp" {
 			t.Fatalf("%v unexpectedly succeeded: stdout=%s stderr=%s", args, stdout.String(), stderr.String())
 		}
 		return stdout.String(), stderr.String()

@@ -161,3 +161,22 @@ func TestLinkStrictDecode(t *testing.T) {
 		t.Error("an unknown field (a socket) must be refused")
 	}
 }
+
+func TestLinkAgentStartNameIsOptional(t *testing.T) {
+	testConfig(t)
+	p := ProcID{PID: fakeBase + 5, Start: 5}
+	// A link written without the field parses, and reads back empty.
+	if err := WriteLink(Link{Agent: p, Kind: KindClaudeCode, ConversationID: convID(1)}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := ReadLink(p)
+	if err != nil || l.AgentStartName != "" {
+		t.Fatalf("%+v %v", l, err)
+	}
+	if err := WriteLink(Link{Agent: p, Kind: KindClaudeCode, ConversationID: convID(1), AgentStartName: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if l, err = ReadLink(p); err != nil || l.AgentStartName != "web" {
+		t.Fatalf("%+v %v", l, err)
+	}
+}

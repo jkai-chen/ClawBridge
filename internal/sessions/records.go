@@ -246,30 +246,11 @@ func Claim(dir, name, conv string, agent ProcID, instance string, hint Hint) (Re
 		if err != nil {
 			return err
 		}
-		r, found := findByName(recs, name)
-		if found {
-			if pid, busy := liveOther(r, agent); busy {
-				return ErrInUse{PID: pid}
-			}
-		}
-		// A claim with no conversation is the no-link path: it may not take a
-		// record that belongs to conversations (ClaimByNameNoLink decides).
-		if found && conv == "" && len(r.Conversations) > 0 {
-			return ErrBelongsToAnother
-		}
-		if conv != "" && takenElsewhere(recs, name, conv) {
-			return ErrConversationTaken
-		}
-		// A new conversation may not take a session that belongs to others by
-		// guessing its name; only `agent start NAME` (the hint) may.
-		if found && conv != "" && len(r.Conversations) > 0 && !slices.Contains(r.Conversations, conv) &&
-			hint.AgentStartName != name {
-			return ErrBelongsToAnother
+		r, found, err := checkClaim(recs, name, conv, agent, hint)
+		if err != nil {
+			return err
 		}
 		if !found {
-			if caseCollision(recs, name) {
-				return ErrNameCaseCollision
-			}
 			ws, proj := dirNames(dir)
 			t := now().UTC()
 			r = Record{Name: name, Workspace: ws, Project: proj, Created: t}
@@ -289,6 +270,85 @@ func Claim(dir, name, conv string, agent ProcID, instance string, hint Hint) (Re
 		return err
 	})
 	return out, err
+}
+
+// checkClaim is the part of Claim that only reads the records: the live
+// owner, a claim with no conversation, F8, the rule that a record listing
+// other conversations is taken only with the agent-start hint, and a case
+// collision for a new name. It returns the record the claim would adopt.
+func checkClaim(recs []Record, name, conv string, agent ProcID, hint Hint) (Record, bool, error) {
+	r, found := findByName(recs, name)
+	if found {
+		if pid, busy := liveOther(r, agent); busy {
+			return Record{}, true, ErrInUse{PID: pid}
+		}
+	}
+	// A claim with no conversation is the no-link path: it may not take a
+	// record that belongs to conversations (ClaimByNameNoLink decides).
+	if found && conv == "" && len(r.Conversations) > 0 {
+		return Record{}, true, ErrBelongsToAnother
+	}
+	if conv != "" && takenElsewhere(recs, name, conv) {
+		return Record{}, found, ErrConversationTaken
+	}
+	// A new conversation may not take a session that belongs to others by
+	// guessing its name; only `agent start NAME` (the hint) may.
+	if found && conv != "" && len(r.Conversations) > 0 && !slices.Contains(r.Conversations, conv) &&
+		hint.AgentStartName != name {
+		return Record{}, true, ErrBelongsToAnother
+	}
+	if !found && caseCollision(recs, name) {
+		return Record{}, false, ErrNameCaseCollision
+	}
+	return r, found, nil
+}
+
+// checkClaimNoLink is checkClaim for a claim with no link and so no
+// conversation ID (ClaimByNameNoLink).
+func checkClaimNoLink(recs []Record, name string, agent ProcID, hint Hint) (Record, bool, error) {
+	r, found := findByName(recs, name)
+	if !found {
+		if caseCollision(recs, name) {
+			return Record{}, false, ErrNameCaseCollision
+		}
+		return Record{}, false, nil
+	}
+	if pid, busy := liveOther(r, agent); busy {
+		return Record{}, true, ErrInUse{PID: pid}
+	}
+	if len(r.Conversations) > 0 && !hint.matches(r) {
+		return Record{}, true, ErrBelongsToAnother
+	}
+	return r, true, nil
+}
+
+// PreCheck is the lock-free look a claimer takes before it calls the server
+// (design §2.2, "Claim protocol"): it runs the checks of Claim, or of
+// ClaimByNameNoLink when conv is empty, against the records as they are now,
+// and writes nothing. It returns the existing record of that name, if any.
+// A pass proves nothing: Claim checks again under the lock, and that is the
+// one that counts.
+func PreCheck(dir, name, conv string, agent ProcID, hint Hint) (Record, bool, error) {
+	if err := checkSegment("session name", name); err != nil {
+		return Record{}, false, err
+	}
+	if err := checkAgent(agent); err != nil {
+		return Record{}, false, err
+	}
+	if conv != "" {
+		var err error
+		if conv, err = normConv(conv); err != nil {
+			return Record{}, false, err
+		}
+	}
+	recs, err := listRecords(dir)
+	if err != nil {
+		return Record{}, false, err
+	}
+	if conv == "" {
+		return checkClaimNoLink(recs, name, agent, hint)
+	}
+	return checkClaim(recs, name, conv, agent, hint)
 }
 
 // caseCollision reports whether a record's name equals name when case is
@@ -413,21 +473,13 @@ func ClaimByNameNoLink(dir, name string, agent ProcID, hint Hint) (Record, error
 		if err != nil {
 			return err
 		}
-		r, found := findByName(recs, name)
-		switch {
-		case !found:
-			if caseCollision(recs, name) {
-				return ErrNameCaseCollision
-			}
+		r, found, err := checkClaimNoLink(recs, name, agent, hint)
+		if err != nil {
+			return err
+		}
+		if !found {
 			ws, proj := dirNames(dir)
 			r = Record{Name: name, Workspace: ws, Project: proj, Created: now().UTC()}
-		default:
-			if pid, busy := liveOther(r, agent); busy {
-				return ErrInUse{PID: pid}
-			}
-			if len(r.Conversations) > 0 && !hint.matches(r) {
-				return ErrBelongsToAnother
-			}
 		}
 		owner := agent
 		r.Owner = &owner

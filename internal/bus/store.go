@@ -599,6 +599,9 @@ func (s *Store) audit(ctx context.Context, tx *transaction, w, p, session, entit
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
+// ValidName reports whether s is a valid workspace, project or session name.
+func ValidName(s string) bool { return namePattern.MatchString(s) }
+
 func nameOK(v string) error {
 	if !namePattern.MatchString(v) {
 		return errors.New("name must be 1–128 letters, digits, dot, underscore or hyphen")

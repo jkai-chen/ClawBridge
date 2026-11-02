@@ -51,6 +51,8 @@ front of the servers stands in for the load balancer and drops the answers a
 dead server never sent; a consumer checks for a waiting ack the way the MCP
 server does (`PromoteAck`), rather than running the MCP server itself.
 
+The `windows-unit` CI job runs the Windows-specific unit tests (the key agent, sealing, private files, device keys and signing, and the Linear connection) on `windows-latest`; it always reports, and a pull request that touches none of those packages, `go.mod`, `go.sum` or `ci.yml` passes it without running them.
+
 The wrapper creates a unique loopback-only PostgreSQL container, supplies its DSN
 through the test environment and removes its container/anonymous volume on exit.
 It does not reuse an existing database. Live identity and native-keychain checks

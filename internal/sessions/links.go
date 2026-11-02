@@ -37,10 +37,15 @@ type Link struct {
 	CWD            string `json:"cwd,omitempty"`
 	ProjectDir     string `json:"project_dir,omitempty"`
 	// Home is the CLAWBRIDGE_HOME the hook saw, or "".
-	Home           string    `json:"home,omitempty"`
-	TTY            string    `json:"tty,omitempty"`
-	PaneHandle     string    `json:"pane_handle,omitempty"`
-	EnvSessionHint string    `json:"env_session_hint,omitempty"`
+	Home           string `json:"home,omitempty"`
+	TTY            string `json:"tty,omitempty"`
+	PaneHandle     string `json:"pane_handle,omitempty"`
+	EnvSessionHint string `json:"env_session_hint,omitempty"`
+	// AgentStartName is the name a start ticket gave this exact process
+	// (`agent start NAME`, copied in by its SessionStart hook). It is the
+	// only source of Hint.AgentStartName: never an environment variable, which
+	// a child process inherits. Optional, so a link written without it parses.
+	AgentStartName string    `json:"agent_start_name,omitempty"`
 	At             time.Time `json:"at"`
 }
 

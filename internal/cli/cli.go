@@ -363,6 +363,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	config, configPath, err := resolveConfig(ctx, flags)
+	if command == "mcp" && runtimeIdentity(flags) {
+		// A profile that can't be read is the lazy route's to report.
+		return runMCPRuntime(ctx, flags, config)
+	}
 	if err != nil {
 		return err
 	}

@@ -395,7 +395,12 @@ func TestPassphraseHeaderIsLockedNotCorrupt(t *testing.T) {
 	keys := filepath.Join(state, "keys")
 	os.Mkdir(keys, 0o700)
 	fsprivate.MakePrivate(keys)
-	hdr := `{"v":2,"kid":"0123456789abcdef","mode":"passphrase","kdf":"argon2id","m":65536,"t":3,"p":1,"salt":"AAAA","nonce":"AAAA","wrapped":"AAAA"}`
+	lowKDF(t)
+	wrapped, err := wrap("0123456789abcdef", make([]byte, keyLen), []byte(testPass))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr := string(wrapped)
 	os.WriteFile(filepath.Join(keys, "data.key"), []byte(hdr), 0o600)
 	// A record sealed elsewhere stands in for one sealed before the switch.
 	donor, donorState := open(t)

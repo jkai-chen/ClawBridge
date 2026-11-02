@@ -28,6 +28,9 @@ const (
 const (
 	recordVersion  = 1
 	dataKeyVersion = 2
+	modeFile       = "file"
+	modePassphrase = "passphrase"
+	kdfName        = "argon2id"
 	keyLen         = 32
 	nonceLen       = 24
 	tagLen         = 16
@@ -109,41 +112,101 @@ func decodeRecord(raw []byte) (rec record, nonce, ct []byte, err error) {
 	return rec, nonce, ct, nil
 }
 
-// dataKeyFile is the header of data.key. Passphrase mode adds fields that
-// are parsed by a later phase; here only the mode is read.
+// dataKeyFile is the header of data.key. File mode holds the key; passphrase
+// mode holds the key wrapped under a key derived from a passphrase.
 type dataKeyFile struct {
 	V    int    `json:"v"`
 	Kid  string `json:"kid"`
 	Mode string `json:"mode"`
 	Key  string `json:"key,omitempty"`
+
+	KDF     string `json:"kdf,omitempty"`
+	M       uint32 `json:"m,omitempty"`
+	T       uint32 `json:"t,omitempty"`
+	P       uint32 `json:"p,omitempty"`
+	Salt    string `json:"salt,omitempty"`
+	Nonce   string `json:"nonce,omitempty"`
+	Wrapped string `json:"wrapped,omitempty"`
 }
 
-// parseDataKey returns a data key file's kid and key. Passphrase mode is
-// ErrPassphraseMode: the key is wrapped and nothing here can unwrap it.
-func parseDataKey(raw []byte, path string) (kid string, key []byte, err error) {
+// KDF parameter limits, in KiB, passes and lanes. A header outside them is
+// corrupt before any key derivation runs: the floor stops a crafted file
+// from downgrading the KDF, the ceiling from making a reader burn memory.
+const (
+	minKDFMemory = 19456
+	maxKDFMemory = 1048576
+	maxKDFTime   = 16
+	maxKDFLanes  = 8
+	saltLen      = 16
+	wrappedLen   = keyLen + tagLen
+)
+
+// passphraseFields checks a passphrase header's KDF parameters and field
+// sizes and returns the decoded salt, nonce and wrapped key. It runs no KDF.
+func (h *dataKeyFile) passphraseFields() (salt, nonce, wrapped []byte, err error) {
+	bad := fail(CodeRecordCorrupt, "", "the passphrase header is malformed")
+	if h.Key != "" || h.KDF != kdfName {
+		return nil, nil, nil, bad
+	}
+	if h.M < minKDFMemory || h.M > maxKDFMemory || h.T < 1 || h.T > maxKDFTime || h.P < 1 || h.P > maxKDFLanes {
+		return nil, nil, nil, bad
+	}
+	if salt, err = b64.DecodeString(h.Salt); err != nil || len(salt) != saltLen {
+		return nil, nil, nil, bad
+	}
+	if nonce, err = b64.DecodeString(h.Nonce); err != nil || len(nonce) != nonceLen {
+		return nil, nil, nil, bad
+	}
+	if wrapped, err = b64.DecodeString(h.Wrapped); err != nil || len(wrapped) != wrappedLen {
+		return nil, nil, nil, bad
+	}
+	return salt, nonce, wrapped, nil
+}
+
+// parseHeader checks a data key file's shape without returning its key: the
+// size, the version, the key ID, the mode and, in passphrase mode, the KDF
+// limits.
+func parseHeader(raw []byte, path string) (*dataKeyFile, error) {
 	if len(raw) > maxKeyFileSize {
-		return "", nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" is too large")
+		return nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" is too large")
 	}
 	var h dataKeyFile
 	if json.Unmarshal(raw, &h) != nil || h.V != dataKeyVersion || !kidPattern.MatchString(h.Kid) {
-		return "", nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" is not a valid key file")
+		return nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" is not a valid key file")
 	}
 	switch h.Mode {
-	case "file":
-		key, err = b64.DecodeString(h.Key)
-		if err != nil || len(key) != keyLen {
-			return "", nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" holds a malformed key")
+	case modeFile:
+		if key, err := b64.DecodeString(h.Key); err != nil || len(key) != keyLen || h.KDF != "" || h.Wrapped != "" {
+			return nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" holds a malformed key")
 		}
-		return h.Kid, key, nil
-	case "passphrase":
+	case modePassphrase:
+		if _, _, _, err := h.passphraseFields(); err != nil {
+			return nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" has a malformed passphrase header")
+		}
+	default:
+		return nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" has an unknown mode")
+	}
+	return &h, nil
+}
+
+// parseDataKey returns a data key file's kid and key. Passphrase mode is
+// ErrPassphraseMode, with the kid: the key is wrapped and nothing here can
+// unwrap it. A passphrase header outside the KDF limits is corrupt.
+func parseDataKey(raw []byte, path string) (kid string, key []byte, err error) {
+	h, err := parseHeader(raw, path)
+	if err != nil {
+		return "", nil, err
+	}
+	if h.Mode == modePassphrase {
 		return h.Kid, nil, fail(CodePassphraseMode, path, "the data key "+path+" is locked with a passphrase; unlock it first")
 	}
-	return "", nil, fail(CodeRecordCorrupt, path, "the data key file "+path+" has an unknown mode")
+	key, _ = b64.DecodeString(h.Key)
+	return h.Kid, key, nil
 }
 
 // encodeDataKey is a new file-mode data key file.
 func encodeDataKey(kid string, key []byte) []byte {
-	b, _ := json.Marshal(dataKeyFile{V: dataKeyVersion, Kid: kid, Mode: "file", Key: b64.EncodeToString(key)})
+	b, _ := json.Marshal(dataKeyFile{V: dataKeyVersion, Kid: kid, Mode: modeFile, Key: b64.EncodeToString(key)})
 	return append(b, '\n')
 }
 

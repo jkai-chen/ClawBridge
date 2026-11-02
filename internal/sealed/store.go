@@ -70,6 +70,10 @@ type Store struct {
 	// that lost the creation race reads the winner's key.
 	tolerateLinks bool
 
+	// unlocked is set on a store made by OpenUnlocked: its data key came
+	// from the caller, not from data.key, and it never makes a data key.
+	unlocked bool
+
 	// afterReseal is a test hook: Rotate calls it after each record is
 	// resealed, and an error stops the rotation there as a crash would.
 	afterReseal func(done int) error
@@ -82,6 +86,24 @@ type Store struct {
 // Check can report it, and every Seal and Unseal then fails with
 // ErrMissingDataKey.
 func Open(stateDir string) (*Store, error) {
+	s, err := openDir(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err = s.recoverRotation(); err != nil {
+		return nil, err
+	}
+	if _, _, err = s.writerKey(); err != nil && !errors.Is(err, ErrMissingDataKey) && !errors.Is(err, ErrPassphraseMode) {
+		return nil, err
+	}
+	return s, nil
+}
+
+// openDir prepares <stateDir>/keys and returns a store over it, touching no
+// key file.
+func openDir(stateDir string) (*Store, error) {
 	if stateDir == "" {
 		return nil, fail(CodeInvalid, "", "no state directory")
 	}
@@ -94,14 +116,6 @@ func Open(stateDir string) (*Store, error) {
 	}
 	s := &Store{dir: filepath.Join(state, "keys"), keys: map[string][]byte{}}
 	if err = s.makeDir(s.dir); err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err = s.recoverRotation(); err != nil {
-		return nil, err
-	}
-	if _, _, err = s.writerKey(); err != nil && !errors.Is(err, ErrMissingDataKey) && !errors.Is(err, ErrPassphraseMode) {
 		return nil, err
 	}
 	return s, nil
@@ -204,7 +218,15 @@ func (s *Store) readKeyFile(path string) (kid string, key []byte, err error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if kid, key, err = parseDataKey(raw, path); err != nil {
+	kid, key, err = parseDataKey(raw, path)
+	if errors.Is(err, ErrPassphraseMode) && s.unlocked {
+		// The header is wrapped; the key is the one the caller unlocked, if
+		// the file still names it.
+		if k, ok := s.keys[kid]; ok {
+			return kid, k, nil
+		}
+	}
+	if err != nil {
 		return "", nil, err
 	}
 	s.keys[kid] = key
@@ -235,7 +257,7 @@ func (s *Store) writerKey() (string, []byte, error) {
 		}
 		return s.currentKey()
 	}
-	if CodeOf(err) == CodeRecordCorrupt && s.unusedDataKey() {
+	if !s.unlocked && CodeOf(err) == CodeRecordCorrupt && s.unusedDataKey() {
 		// Empty or unparseable, and no record exists to be orphaned: it is
 		// as good as missing.
 		if rerr := fsprivate.Remove(dk); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
@@ -245,6 +267,10 @@ func (s *Store) writerKey() (string, []byte, error) {
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return "", nil, err
+	}
+	if s.unlocked {
+		// The caller holds a key; a data.key that vanished is not made again.
+		return "", nil, s.missingKey()
 	}
 	// data.key is missing: make one only on a store that has nothing to lose.
 	if _, err := os.Lstat(filepath.Join(s.dir, nextKeyName)); err == nil {

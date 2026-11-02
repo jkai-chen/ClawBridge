@@ -103,13 +103,13 @@ func TestUIHandOffPrintsTheNoOpenNote(t *testing.T) {
 		}
 	}
 	var out, errOut bytes.Buffer
-	if err := handOffUI(ctx, base, "/p/a.toml", "linux", false, &out, &errOut); err != nil {
+	if err := handOffUI(ctx, base, "/p/a.toml", "linux", false, uiMode{opener: uiOpener("linux")}, &out, &errOut); err != nil {
 		t.Fatal(err)
 	}
 	if runtime.GOOS == "windows" {
 		// No control socket on Windows: the hand-off says where the UI runs
 		// and opens nothing (the designed behaviour).
-		want := "ClawBridge UI is already running on " + srv.URL() + ". Stop it with Ctrl-C in its terminal and run clawbridge ui again for a new tab.\n"
+		want := "ClawBridge UI is already running on " + srv.URL() + ". Stop it with Ctrl-C in its terminal and run clawbridge ui again for a new window or tab.\n"
 		if len(opened) != 0 {
 			t.Fatalf("opened %v", opened)
 		}
@@ -117,7 +117,7 @@ func TestUIHandOffPrintsTheNoOpenNote(t *testing.T) {
 			t.Errorf("stdout %q, stderr %q, want stdout %q", out.String(), errOut.String(), want)
 		}
 		out.Reset()
-		if err := handOffUI(ctx, base, "/p/b.toml", "linux", false, &out, &errOut); err == nil {
+		if err := handOffUI(ctx, base, "/p/b.toml", "linux", false, uiMode{opener: uiOpener("linux")}, &out, &errOut); err == nil {
 			t.Error("handed off across profiles")
 		}
 		return
@@ -134,7 +134,7 @@ func TestUIHandOffPrintsTheNoOpenNote(t *testing.T) {
 		}
 	}
 	// Another profile does not get this server.
-	if err := handOffUI(ctx, base, "/p/b.toml", "linux", false, &out, &errOut); err == nil {
+	if err := handOffUI(ctx, base, "/p/b.toml", "linux", false, uiMode{opener: uiOpener("linux")}, &out, &errOut); err == nil {
 		t.Error("handed off across profiles")
 	}
 }

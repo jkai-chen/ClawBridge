@@ -982,7 +982,7 @@ func TestTwoProfilesRunTwoIndependentServers(t *testing.T) {
 	}
 	// Defence in depth: a handoff to a directory whose server serves another
 	// profile is refused.
-	_, err = requestHandoffAt(context.Background(), a.srv.dir, "/profiles/b.toml", "url")
+	_, err = requestHandoffAt(context.Background(), a.srv.dir, "/profiles/b.toml", "url", "")
 	var pm *ProfileMismatchError
 	if !errors.As(err, &pm) {
 		t.Errorf("mismatch: %v", err)

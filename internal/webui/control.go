@@ -28,6 +28,9 @@ type controlRequest struct {
 	// Want is "open" (what the opener is given) or "url" (a token URL for
 	// the person's terminal).
 	Want string `json:"want"`
+	// LaunchDir is a snap browser's launch directory (see Config.LaunchDir);
+	// the server refuses anything but its own shape.
+	LaunchDir string `json:"launch_dir,omitempty"`
 }
 
 type controlReply struct {
@@ -91,7 +94,7 @@ func (s *Server) handleControl(c net.Conn) {
 	case req.Want == "url":
 		rep.Target, err = s.NoOpenURL()
 	case req.Want == "open":
-		rep.Target, err = s.OpenTarget()
+		rep.Target, err = s.openTarget(req.LaunchDir)
 	default:
 		rep.Error = "bad request"
 	}
@@ -124,18 +127,24 @@ type NoControlError struct {
 
 func (e *NoControlError) Error() string {
 	if e.URL != "" {
-		return "ClawBridge UI is already running on " + e.URL + " but cannot be asked for a new tab from here"
+		return "ClawBridge UI is already running on " + e.URL + " but cannot be asked for a new window or tab from here"
 	}
-	return "ClawBridge UI is already running but cannot be asked for a new tab from here"
+	return "ClawBridge UI is already running but cannot be asked for a new window or tab from here"
 }
 
 // RequestHandoff asks the running server for a fresh launch. want is "open"
 // or "url". With no control channel it returns a *NoControlError.
 func RequestHandoff(ctx context.Context, stateDir, profile, want string) (Handoff, error) {
-	return requestHandoffAt(ctx, ProfileDir(stateDir, profile), profile, want)
+	return RequestHandoffIn(ctx, stateDir, profile, want, "")
 }
 
-func requestHandoffAt(ctx context.Context, stateDir, profile, want string) (Handoff, error) {
+// RequestHandoffIn is RequestHandoff for an opener that needs the launch
+// file in launchDir (a snap browser; see Config.LaunchDir).
+func RequestHandoffIn(ctx context.Context, stateDir, profile, want, launchDir string) (Handoff, error) {
+	return requestHandoffAt(ctx, ProfileDir(stateDir, profile), profile, want, launchDir)
+}
+
+func requestHandoffAt(ctx context.Context, stateDir, profile, want, launchDir string) (Handoff, error) {
 	var running info
 	if b, err := os.ReadFile(filepath.Join(stateDir, infoName)); err == nil {
 		json.Unmarshal(b, &running)
@@ -153,7 +162,7 @@ func requestHandoffAt(ctx context.Context, stateDir, profile, want string) (Hand
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(5 * time.Second))
-	if err := json.NewEncoder(c).Encode(controlRequest{Want: want}); err != nil {
+	if err := json.NewEncoder(c).Encode(controlRequest{Want: want, LaunchDir: launchDir}); err != nil {
 		return Handoff{}, err
 	}
 	var rep controlReply

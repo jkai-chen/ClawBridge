@@ -23,14 +23,59 @@ import (
 // uiOpener opens a browser; tests replace it.
 var uiOpener = func(platform string) webui.Opener { return webui.SystemOpener(platform) }
 
+// uiProbe is the machine the app-window browser search reads; tests replace
+// it. uiGetenv answers the display check.
+var (
+	uiProbe  = func(platform string) webui.Probe { return webui.SystemProbe(platform) }
+	uiGetenv = os.Getenv
+	// uiConnectWait is how long an app window may take to connect before
+	// the --browser hint is printed.
+	uiConnectWait = 15 * time.Second
+)
+
+const noBrowserNote = "No Chrome, Edge, Chromium or Brave found; opening your default browser instead, as clawbridge ui --browser does."
+
+// uiMode is how the UI is opened: the system opener (a tab in the default
+// browser) or a Chromium-family app window.
+type uiMode struct {
+	opener webui.Opener
+	app    *webui.AppWindow // nil: the system opener
+}
+
+func (m uiMode) launchDir() string {
+	if m.app == nil {
+		return ""
+	}
+	return m.app.LaunchDir
+}
+
+// pickUIMode chooses the app window unless --browser asks for a tab, a
+// Linux session has no display, or no browser is found (one stderr line).
+func pickUIMode(platform string, browser bool, stateDir, profile string, stderr io.Writer) uiMode {
+	tab := uiMode{opener: uiOpener(platform)}
+	if browser {
+		return tab
+	}
+	if platform == "linux" && uiGetenv("DISPLAY") == "" && uiGetenv("WAYLAND_DISPLAY") == "" {
+		return tab
+	}
+	app, err := webui.PlanAppWindow(uiProbe(platform), stateDir, profile)
+	if err != nil {
+		fmt.Fprintln(stderr, noBrowserNote)
+		return tab
+	}
+	return uiMode{opener: app.Opener(), app: app}
+}
+
 // runUI serves the local web UI (live/GUI-DESIGN.md §12): this client, in
-// the person's terminal, behind a loopback listener. It stops when the tab
+// the person's terminal, behind a loopback listener. It stops when the window or tab
 // closes, on Ctrl-C or on SIGTERM.
 func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.Writer) error {
-	var noOpen bool
+	var noOpen, browser bool
 	var port int
 	_, err := commandFlags("ui", args, stderr, func(f *flag.FlagSet) {
 		f.BoolVar(&noOpen, "no-open", false, "print the link instead of opening a browser")
+		f.BoolVar(&browser, "browser", false, "open a tab in your default browser instead of an app window")
 		f.IntVar(&port, "port", 0, "listen on this port of 127.0.0.1 (default: a random one)")
 	})
 	if errors.Is(err, flag.ErrHelp) {
@@ -59,18 +104,24 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 	stateDir := filepath.Join(home, "ui")
 	platform := guibackend.Platform()
 	backend := &guibackend.Server{}
+	// --no-open wins over every mode: nothing is looked for or opened.
+	mode := uiMode{opener: uiOpener(platform)}
+	if !noOpen {
+		mode = pickUIMode(platform, browser, stateDir, profile, stderr)
+	}
 	srv, err := webui.New(webui.Config{
-		Backend:  backend,
-		Profile:  profile,
-		StateDir: stateDir,
-		Port:     port,
-		Platform: platform,
-		Opener:   uiOpener(platform),
-		Log:      stderr,
+		Backend:   backend,
+		Profile:   profile,
+		StateDir:  stateDir,
+		Port:      port,
+		Platform:  platform,
+		Opener:    mode.opener,
+		LaunchDir: mode.launchDir(),
+		Log:       stderr,
 	})
 	var running *webui.AlreadyRunning
 	if errors.As(err, &running) {
-		return handOffUI(ctx, stateDir, profile, platform, noOpen, stdout, stderr)
+		return handOffUI(ctx, stateDir, profile, platform, noOpen, mode, stdout, stderr)
 	}
 	if err != nil {
 		return err
@@ -133,7 +184,7 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 	// stream (tui/inboxlive.go), and the UI never runs as a session.
 	go guibackend.PushOutboxCount(ctx, backend, in.OutboxWaiting, 5*time.Second)
 	go guibackend.PushNeedsChanged(ctx, backend, needsCycle, 30*time.Second)
-	fmt.Fprintf(stdout, "ClawBridge UI on %s (stops when you close the tab)\n", srv.URL())
+	fmt.Fprintf(stdout, "ClawBridge UI on %s (stops when you close it)\n", srv.URL())
 	if noOpen {
 		link, err := srv.NoOpenURL()
 		if err != nil {
@@ -141,15 +192,20 @@ func runUI(ctx context.Context, flags Config, args []string, stdout, stderr io.W
 		}
 		fmt.Fprintf(stdout, "Open this link in your browser (single use, valid for a minute): %s\n", link)
 	} else {
-		go openUI(ctx, stderr, webui.FileRoute(platform), func(ctx context.Context) (bool, error) { return srv.Open(ctx) })
+		open := func(ctx context.Context) (bool, error) { return srv.Open(ctx) }
+		if mode.app != nil {
+			go announceApp(ctx, stderr, backend, open, uiConnectWait)
+		} else {
+			go openUI(ctx, stderr, webui.FileRoute(platform), open)
+		}
 	}
 	err = srv.Serve(ctx)
 	switch {
 	case errors.Is(err, webui.ErrIdle):
-		fmt.Fprintln(stdout, "ClawBridge UI stopped: no tab was connected for a minute.")
+		fmt.Fprintln(stdout, "ClawBridge UI stopped: no window or tab was connected for a minute.")
 		return nil
 	case errors.Is(err, webui.ErrNeverConnected):
-		fmt.Fprintln(stdout, "ClawBridge UI stopped: no tab connected. Run clawbridge ui again, or clawbridge ui --no-open for a link.")
+		fmt.Fprintln(stdout, "ClawBridge UI stopped: no window or tab connected. Run clawbridge ui again, or clawbridge ui --no-open for a link.")
 		return nil
 	}
 	return err
@@ -170,24 +226,59 @@ func openUI(ctx context.Context, stderr io.Writer, fileRoute bool, open func(con
 		return
 	}
 	if !opened && ctx.Err() == nil {
-		fmt.Fprintln(stderr, "If no tab opened, run clawbridge ui --no-open to get a link.")
+		fmt.Fprintln(stderr, "If no window or tab opened, run clawbridge ui --no-open to get a link.")
+	}
+}
+
+// announceApp opens the app window and says something only when the start
+// failed, or when no window connected within wait. A browser app keeps
+// running, so the opener's "still running" outcome is the normal one and is
+// not reported.
+func announceApp(ctx context.Context, stderr io.Writer, b *guibackend.Server, open func(context.Context) (bool, error), wait time.Duration) {
+	if !openApp(ctx, stderr, open) {
+		return
+	}
+	hintIfNoWindow(ctx, stderr, b, wait)
+}
+
+// openApp runs the opener and reports only a real error, never a token.
+func openApp(ctx context.Context, stderr io.Writer, open func(context.Context) (bool, error)) bool {
+	if _, err := open(ctx); err != nil {
+		fmt.Fprintf(stderr, "Could not open a browser (%v). Run clawbridge ui --no-open to get a link, or clawbridge ui --browser.\n", err)
+		return false
+	}
+	return true
+}
+
+// hintIfNoWindow says how to get a tab when no app window connected within
+// wait of the open.
+func hintIfNoWindow(ctx context.Context, stderr io.Writer, b *guibackend.Server, wait time.Duration) {
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-t.C:
+	}
+	if b.Connected() == 0 && b.LastDisconnect().IsZero() {
+		fmt.Fprintln(stderr, "If no ClawBridge window opened, run clawbridge ui --browser.")
 	}
 }
 
 // handOffUI asks the UI already running for this profile for a fresh launch
 // and opens it, or says where it runs.
-func handOffUI(ctx context.Context, stateDir, profile, platform string, noOpen bool, stdout, stderr io.Writer) error {
+func handOffUI(ctx context.Context, stateDir, profile, platform string, noOpen bool, mode uiMode, stdout, stderr io.Writer) error {
 	want := "open"
 	if noOpen {
 		want = "url"
 	}
-	h, err := webui.RequestHandoff(ctx, stateDir, profile, want)
+	h, err := webui.RequestHandoffIn(ctx, stateDir, profile, want, mode.launchDir())
 	var noControl *webui.NoControlError
 	if errors.As(err, &noControl) {
 		if noControl.URL == "" {
 			return err
 		}
-		fmt.Fprintf(stdout, "ClawBridge UI is already running on %s. Stop it with Ctrl-C in its terminal and run clawbridge ui again for a new tab.\n", noControl.URL)
+		fmt.Fprintf(stdout, "ClawBridge UI is already running on %s. Stop it with Ctrl-C in its terminal and run clawbridge ui again for a new window or tab.\n", noControl.URL)
 		return nil
 	}
 	if err != nil {
@@ -197,8 +288,17 @@ func handOffUI(ctx context.Context, stateDir, profile, platform string, noOpen b
 		fmt.Fprintf(stdout, "ClawBridge UI is already running on %s\nOpen this link in your browser (single use, valid for a minute): %s\n", h.URL, h.Target)
 		return nil
 	}
-	fmt.Fprintf(stdout, "ClawBridge UI is already running on %s; opening a new tab.\n", h.URL)
-	openUI(ctx, stderr, webui.FileRoute(platform), func(ctx context.Context) (bool, error) { return uiOpener(platform)(ctx, h.Target) })
+	what := "tab"
+	if mode.app != nil {
+		what = "window"
+	}
+	fmt.Fprintf(stdout, "ClawBridge UI is already running on %s; opening a new %s.\n", h.URL, what)
+	open := func(ctx context.Context) (bool, error) { return mode.opener(ctx, h.Target) }
+	if mode.app != nil {
+		openApp(ctx, stderr, open)
+		return nil
+	}
+	openUI(ctx, stderr, webui.FileRoute(platform), open)
 	return nil
 }
 

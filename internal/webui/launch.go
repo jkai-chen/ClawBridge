@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"clawbridge/internal/auth"
@@ -67,7 +68,42 @@ func (s *Server) NoOpenURL() (string, error) {
 
 // OpenTarget is what the opener is given: the launch file's file:// URL on
 // darwin and linux, the token URL where argv is private.
-func (s *Server) OpenTarget() (string, error) {
+func (s *Server) OpenTarget() (string, error) { return s.openTarget(s.cfg.LaunchDir) }
+
+// launchDirFor is where a launch file goes: the state directory, or a snap
+// browser's own directory when dir has exactly the shape
+// ~/snap/<name>/common/clawbridge-ui/<this profile's hash>.
+func (s *Server) launchDirFor(dir string) (string, error) {
+	if dir == "" {
+		return s.dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir = filepath.Clean(dir)
+	rel, err := filepath.Rel(filepath.Join(home, "snap"), dir)
+	if err != nil {
+		return "", errors.New("launch directory refused")
+	}
+	p := strings.Split(rel, string(filepath.Separator))
+	if len(p) != 4 || p[0] == "" || p[0] == ".." || p[0] == "." || p[1] != "common" || p[2] != "clawbridge-ui" || p[3] != filepath.Base(s.dir) {
+		return "", errors.New("launch directory refused")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := checkPrivateDir(dir); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func (s *Server) openTarget(launchDir string) (string, error) {
+	dir, err := s.launchDirFor(launchDir)
+	if err != nil {
+		return "", err
+	}
 	tok, u, err := s.tokenURL()
 	if err != nil {
 		return "", err
@@ -75,7 +111,7 @@ func (s *Server) OpenTarget() (string, error) {
 	if !fileRoute(s.platform) {
 		return u, nil
 	}
-	path, err := s.writeLaunchFile(u)
+	path, err := s.writeLaunchFile(u, dir)
 	if err != nil {
 		return "", err
 	}
@@ -85,12 +121,12 @@ func (s *Server) OpenTarget() (string, error) {
 
 // writeLaunchFile writes the 0600 page that sends the browser to u. It has
 // no script: a zero-delay meta refresh replaces the file's history entry.
-func (s *Server) writeLaunchFile(u string) (string, error) {
+func (s *Server) writeLaunchFile(u, dir string) (string, error) {
 	name, err := randomHex(8)
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(s.dir, "launch-"+name+".html")
+	path := filepath.Join(dir, "launch-"+name+".html")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
@@ -114,4 +150,25 @@ func (s *Server) Open(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return s.opener(ctx, target)
+}
+
+// sweepSnapLaunchFiles removes stale launch files a hand-off left in any
+// ~/snap/<name>/common/clawbridge-ui/<hash> directory, not only the one this
+// server's config names. Only regular launch-*.html files in a private
+// directory of ours are removed.
+func sweepSnapLaunchFiles(hash string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	files, _ := filepath.Glob(filepath.Join(home, "snap", "*", "common", "clawbridge-ui", hash, "launch-*.html"))
+	for _, f := range files {
+		// A dir that is not already private is left alone, not tightened.
+		if di, err := os.Lstat(filepath.Dir(f)); err != nil || !di.IsDir() || di.Mode().Perm()&0o077 != 0 || checkPrivateDir(filepath.Dir(f)) != nil {
+			continue
+		}
+		if fi, err := os.Lstat(f); err == nil && fi.Mode().IsRegular() {
+			os.Remove(f)
+		}
+	}
 }

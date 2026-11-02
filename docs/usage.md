@@ -692,10 +692,12 @@ mail read; explicit actions retain their normal authority checks.
 
 ```sh
 clawbridge ui
+clawbridge ui --browser
 clawbridge ui --no-open
 ```
 
-`clawbridge ui` opens ClawBridge in your browser, served by the client on
+`clawbridge ui` opens ClawBridge in its own app window (no tabs, no address
+bar), served by the client on
 `127.0.0.1` (a random port, or `--port N`). It is read-only for now, and every
 screen reads live data: Overview (the agent lanes), Needs you, Sessions (with
 the Launch block, below), Projects, Teams & People, Project integrations
@@ -704,20 +706,42 @@ status, views and queued writes), Dispatcher, Account, Doctor and Settings
 (with the Updates page). Write buttons are shown disabled and say "Not in this
 build yet."
 
-- **It stops by itself** one minute after the last tab closes, on Ctrl-C, and
-  after two minutes if no tab ever connects. It is never a daemon and never
+- **The app window.** It uses the first Chromium-family browser found: on
+  macOS Google Chrome, Microsoft Edge, Chromium, then Brave (in `/Applications`,
+  then `~/Applications`); on Linux `google-chrome`, `google-chrome-stable`,
+  `chromium`, `chromium-browser`, `microsoft-edge`, `microsoft-edge-stable`,
+  then `brave-browser` on your PATH; on Windows and in WSL, Microsoft Edge,
+  then Google Chrome. In WSL it opens the Windows browser. The window runs with
+  a profile of its own, kept private to you in ClawBridge's state directory
+  (on Windows and WSL under `%LOCALAPPDATA%\ClawBridge`), so it has none of
+  your tabs, sign-ins or installed extensions. Enterprise browser policy still
+  applies to it. A Linux snap browser keeps that profile under
+  `~/snap/<name>/common/clawbridge-ui/`. On macOS the app may stay in the Dock
+  after you close its window; quit it from the Dock. If you click Chrome's
+  "Relaunch" bar in the app window, the relaunched window cannot reconnect (its
+  link was single use): close it and run `clawbridge ui` again.
+- **`--browser`** opens a tab in your default browser instead, as before.
+  That is also what happens when no Chromium-family browser is found, with one
+  line saying so, and on a Linux session with neither `DISPLAY` nor
+  `WAYLAND_DISPLAY`. If no window connects within 15 seconds of opening the
+  app, a line suggests `clawbridge ui --browser`. `--no-open` wins over both:
+  nothing is opened.
+- **It stops by itself** one minute after the last window or tab closes, on Ctrl-C, and
+  after two minutes if no window or tab ever connects. It is never a daemon and never
   starts at login.
 - **The link is single use.** On macOS and Linux the browser is opened through
-  a private launch file, so no token appears in a process list. On Windows and
-  WSL the browser is given the single-use link itself, which works once and
+  a private launch file, so no token appears in a process list (the app window
+  is given that file's path too). On Windows and WSL the browser is given the
+  single-use link itself, which works once and
   expires after a minute. `--no-open` prints a link that works once, for a
   minute. A new tab opened by hand shows "Open this from `clawbridge ui`";
   run the command again for a fresh one. A second `clawbridge ui` for the same
-  profile asks the running one for a new tab instead of starting another.
+  profile asks the running one for a new window (or, with `--browser`, a new
+  tab) instead of starting another.
 - **Run it yourself, in your own terminal.** It refuses to start inside an
   agent session.
-- **WSL:** run `clawbridge ui` inside WSL and use the Windows browser. It
-  opens with `wslview` if present, otherwise `cmd.exe /c start`, otherwise it
+- **WSL:** run `clawbridge ui` inside WSL and use the Windows browser. With
+  `--browser` (or no Edge or Chrome) it opens with `wslview` if present, otherwise `cmd.exe /c start`, otherwise it
   prints the link. This needs WSL2's localhost forwarding (on by default;
   `localhostForwarding=true` in `.wslconfig`) or mirrored networking. The server
   never binds anything but loopback, so with forwarding off the page cannot

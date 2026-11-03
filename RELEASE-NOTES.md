@@ -1,4 +1,12 @@
-# Unreleased
+# ClawBridge v1.0.2 (released 3 Nov)
+
+**ClawBridge 1.0.2** tightens permissions on 1.0.1. A team's lead adds their team only to a project that already holds a
+team they lead; changing a project's Linear binding or its lanes needs the person, not an agent session; and one agent
+marker, checked by the server, keeps person-only commands out of agent sessions. `clawbridge mcp` resolves its session
+at runtime, and only `--session` pins it. Intake counts a queued issue outside the binding's verified scope as
+`out_of_scope` instead of an error. A project's milestones can be created and updated; this ships off by default, until
+the operator sets `CLAWBRIDGE_MILESTONE_PLAN_PROVEN`. The passphrase-mode key agent is included but not yet wired into
+the CLI. No schema change: an upgrade from 1.0.1 is a drop-in.
 
 ## Permissions
 

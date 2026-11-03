@@ -120,31 +120,86 @@ func (l *pipeListener) newInstance(first bool) (windows.Handle, error) {
 		windows.PIPE_UNLIMITED_INSTANCES, MaxFrame+4, MaxFrame+4, 0, l.sa)
 }
 
+// instanceTries is how many times a failed newInstance is retried, with the
+// accept backoff, before Accept gives up with a fatal error.
+const instanceTries = 8
+
+// Accept waits for a client. An instance whose ConnectNamedPipe fails other
+// than with ERROR_PIPE_CONNECTED (a client that connected and left at once
+// gives ERROR_NO_DATA) is closed and replaced, and the wait goes on. Only a
+// Close of the listener returns errListenerClosed; a failure to make an
+// instance, after bounded retries, is returned as a fatal error.
 func (l *pipeListener) Accept() (conn, error) {
-	l.mu.Lock()
-	if l.closed {
+	for {
+		l.mu.Lock()
+		if l.closed {
+			l.mu.Unlock()
+			return nil, errListenerClosed
+		}
+		if l.next == 0 {
+			l.mu.Unlock()
+			nh, err := l.instanceWithRetry()
+			if err != nil {
+				return nil, err
+			}
+			l.mu.Lock()
+			if l.closed {
+				l.mu.Unlock()
+				windows.CloseHandle(nh)
+				return nil, errListenerClosed
+			}
+			l.next = nh
+		}
+		h := l.next
+		l.accepting = true
 		l.mu.Unlock()
-		return nil, errListenerClosed
+		err := windows.ConnectNamedPipe(h, nil)
+		l.mu.Lock()
+		l.accepting = false
+		if l.closed {
+			// Close left the idle instance to this call.
+			l.next = 0
+			l.mu.Unlock()
+			windows.CloseHandle(h)
+			return nil, errListenerClosed
+		}
+		connected := err == nil || errors.Is(err, windows.ERROR_PIPE_CONNECTED)
+		if !connected {
+			windows.CloseHandle(h)
+		}
+		// A new instance is made at once so that a client never finds the
+		// name without one. If it cannot be made, the next call retries.
+		l.next = 0
+		if nh, nerr := l.newInstance(false); nerr == nil {
+			l.next = nh
+		}
+		l.mu.Unlock()
+		if connected {
+			return &pipeConn{h: h, server: true}, nil
+		}
 	}
-	h := l.next
-	l.accepting = true
-	l.mu.Unlock()
-	err := windows.ConnectNamedPipe(h, nil)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.accepting = false
-	if l.closed || (err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED)) {
-		// Close left the idle instance to this call.
-		windows.CloseHandle(h)
-		return nil, errListenerClosed
+}
+
+// instanceWithRetry makes an instance, retrying a failure with the accept
+// backoff up to instanceTries times. It is called without l.mu held.
+func (l *pipeListener) instanceWithRetry() (windows.Handle, error) {
+	var pause time.Duration
+	var err error
+	for try := 0; try < instanceTries; try++ {
+		var h windows.Handle
+		if h, err = l.newInstance(false); err == nil {
+			return h, nil
+		}
+		l.mu.Lock()
+		closed := l.closed
+		l.mu.Unlock()
+		if closed {
+			return 0, errListenerClosed
+		}
+		pause = nextPause(pause)
+		time.Sleep(pause)
 	}
-	nh, err := l.newInstance(false)
-	if err != nil {
-		windows.CloseHandle(h)
-		return nil, err
-	}
-	l.next = nh
-	return &pipeConn{h: h, server: true}, nil
+	return 0, err
 }
 
 func (l *pipeListener) Close() error {
@@ -154,12 +209,17 @@ func (l *pipeListener) Close() error {
 		return nil
 	}
 	l.closed = true
+	if l.next == 0 {
+		return nil
+	}
 	if l.accepting {
 		// Cancel the Accept blocked in ConnectNamedPipe; it closes the
 		// instance.
 		return windows.CancelIoEx(l.next, nil)
 	}
-	return windows.CloseHandle(l.next)
+	h := l.next
+	l.next = 0
+	return windows.CloseHandle(h)
 }
 
 var errListenerClosed = errors.New("the pipe listener is closed")

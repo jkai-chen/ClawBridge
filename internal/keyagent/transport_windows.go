@@ -130,6 +130,7 @@ const instanceTries = 8
 // Close of the listener returns errListenerClosed; a failure to make an
 // instance, after bounded retries, is returned as a fatal error.
 func (l *pipeListener) Accept() (conn, error) {
+	var pause time.Duration
 	for {
 		l.mu.Lock()
 		if l.closed {
@@ -164,19 +165,27 @@ func (l *pipeListener) Accept() (conn, error) {
 			return nil, errListenerClosed
 		}
 		connected := err == nil || errors.Is(err, windows.ERROR_PIPE_CONNECTED)
+		// A new instance is made at once so that a client never finds the
+		// name without one, and before a failed instance is closed so that
+		// the name is never left without any. If it cannot be made, l.next
+		// stays 0 and the next pass retries with a backoff.
+		nh, nerr := l.newInstance(false)
 		if !connected {
 			windows.CloseHandle(h)
 		}
-		// A new instance is made at once so that a client never finds the
-		// name without one. If it cannot be made, the next call retries.
 		l.next = 0
-		if nh, nerr := l.newInstance(false); nerr == nil {
+		if nerr == nil {
 			l.next = nh
 		}
 		l.mu.Unlock()
 		if connected {
 			return &pipeConn{h: h, server: true}, nil
 		}
+		// A client that connects and leaves at once is not fatal, since any
+		// same-user program can do it, but a run of them is paced so that
+		// the loop does not spin. The loop head checks l.closed again.
+		pause = nextPause(pause)
+		time.Sleep(pause)
 	}
 }
 

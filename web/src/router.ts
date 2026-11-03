@@ -13,3 +13,14 @@ export function go(id: RouteId): void {
   const target = `#/${id}`;
   if (location.hash !== target) location.hash = target;
 }
+
+/** The second path segment (e.g. a session name in #/sessions/NAME), decoded; "" when absent or malformed. */
+export function routeArg(hash: string): string {
+  const parts = hash.replace(/^#\/?/, "").split("?")[0]?.split("/") ?? [];
+  if (!parts[1]) return "";
+  try {
+    return decodeURIComponent(parts[1]);
+  } catch {
+    return "";
+  }
+}

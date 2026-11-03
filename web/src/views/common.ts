@@ -16,6 +16,8 @@ export interface ViewCtx {
   /** Sessions read from the offline copy: the top bar says so. Null clears it. */
   setOffline(copyAt: string | null): void;
   setBadge(nav: string, n: number): void;
+  /** The queued-writes count the client pushes (outbox.count); null until it has said, and in local mode. */
+  outbox: { get(): number | null; subscribe(fn: (n: number) => void): () => void };
   go(path: string): void;
 }
 

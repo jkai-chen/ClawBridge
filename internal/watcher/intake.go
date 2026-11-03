@@ -148,7 +148,7 @@ func (r *intakeRun) skipped(signal, issue, reason, class string) {
 	// An issue outside the binding leaves no trace but its count: no line
 	// names it. The no_label row is a spill of the same kind.
 	switch reason {
-	case "not_in_binding", "other_team", "no_label":
+	case "not_in_binding", "other_team", "no_label", "out_of_scope":
 		return
 	}
 	now := r.w.now()
@@ -180,7 +180,7 @@ func (r *intakeRun) skipped(signal, issue, reason, class string) {
 
 // spillReasons are skips of issues outside the binding or its label: they
 // are counted, and never worth a line of their own.
-var spillReasons = map[string]bool{"not_in_binding": true, "other_team": true, "no_label": true}
+var spillReasons = map[string]bool{"not_in_binding": true, "other_team": true, "no_label": true, "out_of_scope": true}
 
 // logSkips logs an intake pass's skip counts, sorted, and the teams with no
 // needs-agent label: codes and counts only. A pass with nothing but spill
@@ -1323,6 +1323,11 @@ const (
 	intakeTextPerTick = 5
 	// intakeTextEvery is how long a queued issue goes unread by that check.
 	intakeTextEvery = 10 * time.Minute
+	// intakeTextOutOfScopeFirst and intakeTextOutOfScopeMax bound the wait
+	// before a queued issue outside the binding's verified scope is read
+	// again: the first wait, doubled on each read, up to the cap (FR69).
+	intakeTextOutOfScopeFirst = time.Hour
+	intakeTextOutOfScopeMax   = 24 * time.Hour
 )
 
 // holdText re-reads a few of the project's queued, offered or assigned
@@ -1361,11 +1366,19 @@ func (r *intakeRun) holdText(ctx context.Context) {
 			delete(r.w.textChecked, key)
 		}
 	}
+	for key := range r.w.textBackoff {
+		if strings.HasPrefix(key, r.pid+"|") && !live[key] {
+			delete(r.w.textBackoff, key)
+		}
+	}
 	var due []string
 	for _, uuid := range rows {
 		// An issue this pass just queued was read, and stamped, a moment ago.
 		if slices.Contains(r.poll.Queued, uuid) {
 			r.w.textChecked[r.pid+"|"+uuid] = now
+			continue
+		}
+		if b, ok := r.w.textBackoff[r.pid+"|"+uuid]; ok && now.Before(b.until) {
 			continue
 		}
 		if at, ok := r.w.textChecked[r.pid+"|"+uuid]; !ok || now.Sub(at) >= intakeTextEvery {
@@ -1389,12 +1402,38 @@ func (r *intakeRun) holdText(ctx context.Context) {
 		r.poll.Calls++
 		issue, err := r.svc.IssueV2(ctx, r.scope, uuid)
 		if err != nil {
-			r.skipped("text", uuid, "text_unreadable", errClass(err))
+			if linearboard.IsOutOfScope(err) {
+				// The issue left the binding's verified scope: count it, and
+				// read it again only after a growing wait.
+				r.backOffText(uuid, now)
+				r.skipped("text", uuid, "out_of_scope", "")
+			} else {
+				r.skipped("text", uuid, "text_unreadable", errClass(err))
+			}
 			continue
 		}
+		r.w.mu.Lock()
+		delete(r.w.textBackoff, r.pid+"|"+uuid)
+		r.w.mu.Unlock()
 		title := sha256.Sum256([]byte(issue.Title))
 		if _, err = r.w.Store.IntakeTextCheck(ctx, r.pid, issue.ID, hex.EncodeToString(title[:]), issue.DescriptionSHA256); err != nil {
 			r.skipped("text", issue.ID, "text_check_failed", errClass(err))
 		}
 	}
+}
+
+// backOffText sets the next time the text check reads an out-of-scope queued
+// issue: an hour after the first miss, then double the last wait, up to a day.
+func (r *intakeRun) backOffText(uuid string, now time.Time) {
+	r.w.mu.Lock()
+	defer r.w.mu.Unlock()
+	if r.w.textBackoff == nil {
+		r.w.textBackoff = map[string]textBackoff{}
+	}
+	key := r.pid + "|" + uuid
+	wait := intakeTextOutOfScopeFirst
+	if b, ok := r.w.textBackoff[key]; ok {
+		wait = min(b.wait*2, intakeTextOutOfScopeMax)
+	}
+	r.w.textBackoff[key] = textBackoff{until: now.Add(wait), wait: wait}
 }

@@ -148,6 +148,10 @@ type Watcher struct {
 	// signal's text, by project and issue (FR57). It starts empty on a
 	// restart, which only checks sooner.
 	textChecked map[string]time.Time
+	// textBackoff is the wait before the text check reads a queued issue
+	// again, by project and issue, for an issue outside the binding's
+	// verified scope (FR69). It starts empty on a restart.
+	textBackoff map[string]textBackoff
 	// noLabelLogged is each project's teams with no needs-agent label as
 	// the last summary line named them.
 	noLabelLogged map[string]string
@@ -707,4 +711,11 @@ func topBudgetKinds(kinds []bus.LinearBudgetKind, n int) string {
 		return ""
 	}
 	return ", top: " + strings.Join(parts, ", ")
+}
+
+// textBackoff is one out-of-scope queued issue's wait: the time before which
+// the text check leaves it alone, and the length of the wait that set it.
+type textBackoff struct {
+	until time.Time
+	wait  time.Duration
 }

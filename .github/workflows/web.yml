@@ -1,0 +1,66 @@
+name: Web UI
+# The web UI's frontend (web/) and the server that embeds it (internal/webui).
+# CI (ci.yml) builds the Go side with the "UI not built" placeholder; this
+# workflow builds the real bundle, embeds it, and drives the result in
+# headless Chrome under the server's real headers.
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'internal/webui/**', 'internal/guibackend/**', '.github/workflows/web.yml']
+  pull_request:
+    paths: ['web/**', 'internal/webui/**', 'internal/guibackend/**', '.github/workflows/web.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: web-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  web:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.20.0
+      - name: Install from the lockfile, with no install scripts
+        working-directory: web
+        run: npm ci --ignore-scripts
+      - name: Typecheck, lint (the HTML-sink and EventSource bans) and unit tests
+        working-directory: web
+        run: npm run check
+      - name: Build the bundle
+        working-directory: web
+        run: npm run build
+      # From here on the binary embeds the bundle just built.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: The binary embeds the real bundle, not the placeholder
+        env:
+          CLAWBRIDGE_REQUIRE_UI_BUNDLE: '1'
+        run: go test -count=1 -run '^TestEmbeddedBundle$' ./internal/webui
+      - name: Build clawbridge with the bundle
+        run: go build -trimpath -o "$RUNNER_TEMP/clawbridge" ./cmd/clawbridge
+      # As the release does: the binary's embedded file table names the
+      # bundle's entry script (the binary is searched, not run).
+      - name: Require the bundle in the binary
+        run: |
+          entry=$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' internal/webui/dist/app/manifest.sha256 | head -1)
+          [[ -n $entry ]] || { echo "::error::the bundle manifest names no entry script"; exit 1; }
+          grep -aqF "dist/app/$entry" "$RUNNER_TEMP/clawbridge" || { echo "::error::clawbridge does not embed the web UI bundle"; exit 1; }
+      # clawbridge ui --no-open on a throwaway local profile, its link opened
+      # in headless Chrome: the shell renders, the secret is in
+      # sessionStorage and gone from the page and the address, Sessions and
+      # Doctor load through /rpc, and there is no CSP or Trusted Types
+      # violation. The runner's Chrome is used; puppeteer-core downloads none.
+      - name: Headless Chrome check
+        working-directory: web
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: bash e2e/run.sh "$RUNNER_TEMP/clawbridge"

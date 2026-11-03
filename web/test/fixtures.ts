@@ -15,6 +15,9 @@ export const fixtures = {
   hello: result("hello.json"),
   sessionsList: result("sessions-list.json"),
   doctorChecks: result("doctor-checks.json"),
+  needsList: result("needs-list.json"),
+  updatesStatus: result("updates-status.json"),
+  updatesCheck: result("updates-check.json"),
 };
 
 /** A hello with every field the shell shows (the fixture has the minimum). */

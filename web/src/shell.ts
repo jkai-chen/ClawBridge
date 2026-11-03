@@ -12,9 +12,11 @@ import { linearView } from "./views/linear";
 import { projectsView } from "./views/projects";
 import { teamsView } from "./views/teams";
 import { overviewView } from "./views/overview";
-import { placeholder } from "./views/placeholder";
 import { sessionsView } from "./views/sessions";
 import { settingsView } from "./views/settings";
+import { needsView } from "./views/needs";
+import { createNeedsSignal } from "./needsSignal";
+import { parseNeeds } from "./needs";
 import { statePanel, type PanelKind } from "./views/state";
 import type { View } from "./views/common";
 
@@ -35,7 +37,7 @@ const SETTINGS: NavItem = { id: "settings", label: "Settings", icon: "settings" 
 
 const VIEWS: Record<RouteId, View> = {
   overview: overviewView,
-  "needs-you": placeholder({ title: "Needs you", question: "What is waiting on me, and what do I do about it?" }),
+  "needs-you": needsView,
   sessions: sessionsView,
   projects: projectsView,
   teams: teamsView,
@@ -87,6 +89,7 @@ export function mountApp(host: HTMLElement, api: Api): void {
     },
   };
 
+  const needsSignal = createNeedsSignal();
   const sidebar = h("aside", { class: "sidebar" });
   const nav = h("nav", { class: "nav", "aria-label": "Main" });
   const bottomNav = h("nav", { class: "nav", "aria-label": "Settings" });
@@ -169,7 +172,7 @@ export function mountApp(host: HTMLElement, api: Api): void {
     VIEWS[route]({
       root: view, api, hello,
       isCurrent: () => mine === generation,
-      setBadge, outbox,
+      setBadge, outbox, needsChanged: needsSignal.subscribe,
       go: (p) => go(p as RouteId),
       connection: (k) => { conn = k; render(); },
       setOffline: (at) => {
@@ -185,14 +188,25 @@ export function mountApp(host: HTMLElement, api: Api): void {
     if (loadingHello) return;
     loadingHello = true;
     api.hello().then(
-      (x) => { hello = x; },
+      (x) => { hello = x; refreshNeedsBadge(); },
       (e: unknown) => { hello = null; conn = e instanceof ConnectionError ? e.kind : "lost"; },
     ).finally(() => { loadingHello = false; render(); });
+  };
+
+  // The sidebar count is the queue's length; a failed read leaves it as it was.
+  const refreshNeedsBadge = () => {
+    api.rpc("needs.list").then((raw) => setBadge("needs-you", parseNeeds(raw).items.length), () => {});
   };
 
   window.addEventListener("hashchange", render);
   render();
   api.events((e) => {
+    if (e.event === "needs.changed") {
+      // The payload is only a nudge; the queue itself is read again.
+      refreshNeedsBadge();
+      needsSignal.fire();
+      return;
+    }
     if (e.event !== "outbox.count") return;
     // Anything but a count is ignored: the page trusts the shape, not the sender.
     let n: unknown;

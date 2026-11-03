@@ -134,6 +134,8 @@ type fakeLinear struct {
 	unlisted     map[string]bool
 	labelledPage int
 	issueReads   int
+	// issueErr is an error IssueV2 returns for that issue, ahead of the rest.
+	issueErr map[string]error
 	// spill makes the labelled list also return other teams' issues, as a
 	// parent team's filter may return its sub-teams'.
 	spill bool
@@ -196,6 +198,9 @@ func (f *fakeLinear) labelNodes(listing, team string) map[string]any {
 }
 
 func (f *fakeLinear) issue(id string) (linearprovider.IssueV2, error) {
+	if err, ok := f.issueErr[id]; ok {
+		return linearprovider.IssueV2{}, err
+	}
 	if i, ok := f.extra[id]; ok {
 		return i, nil
 	}

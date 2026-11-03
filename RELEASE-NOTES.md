@@ -50,6 +50,13 @@
   that agent's session. Entries that `clawbridge mcp install` wrote all carry `--session` and are unchanged. No
   schema change. Linear config scope: none.
 
+## Intake
+
+- **A queued issue no longer in the binding's verified scope is counted as `out_of_scope`.** It was logged as
+  `text_unreadable (error)` on every pass. The text check now counts it, logs no line naming it, and reads it again
+  after an hour, then two, doubling up to a day; the wait ends when the row leaves the queue or a read succeeds. Other
+  read errors still log `text_unreadable`. No schema change. Linear config scope: none.
+
 # ClawBridge v1.0.1 (released 3 Nov)
 
 **ClawBridge 1.0.1** is a fixes release on 1.0.0. Intake holds an issue's title and description to what the trusted

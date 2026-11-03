@@ -864,10 +864,23 @@ func TestWrongRotationPauseDoesNotBlockOtherRequests(t *testing.T) {
 	old := wrongPassDelay
 	wrongPassDelay = 4 * time.Second
 	t.Cleanup(func() { wrongPassDelay = old })
+	paused := make(chan struct{}, 1)
+	beforePause = func() {
+		select {
+		case paused <- struct{}{}:
+		default:
+		}
+	}
+	t.Cleanup(func() { beforePause = nil })
 	done := make(chan error, 1)
 	go func() { done <- c.Rotate([]byte("not the passphrase at all")) }()
-	// Let the KDF finish; the request is then in its pause.
-	time.Sleep(2 * time.Second)
+	// The KDF runs under the mutex and can take long under -race, so wait
+	// for the signal that the request has reached its pause.
+	select {
+	case <-paused:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the rotation never reached its pause")
+	}
 	start := time.Now()
 	if _, err := c.Status(); err != nil {
 		t.Fatal(err)

@@ -20,6 +20,10 @@ import (
 // it takes the mutex.
 var beforeDo func(*request)
 
+// beforePause is a test hook called when a request is about to take the
+// pause after a wrong passphrase, with the mutex already released.
+var beforePause func()
+
 // wrongPassDelay is the pause after a wrong passphrase to rotate, the same
 // second the CLI waits; tests shorten it.
 var wrongPassDelay = time.Second
@@ -107,6 +111,9 @@ func (h *handler) do(req *request) *response {
 	// The pause after a wrong passphrase is taken with the lock released, so
 	// a loop of wrong rotations does not block sign or unseal.
 	if delay > 0 {
+		if beforePause != nil {
+			beforePause()
+		}
 		time.Sleep(delay)
 	}
 	return resp

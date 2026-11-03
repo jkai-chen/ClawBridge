@@ -33,7 +33,7 @@ export function boardSummary(o: Overview | null): string {
 function list(ctx: ViewCtx, rows: ProjectRow[]): HTMLElement {
   if (rows.length === 0) return emptyBlock("No projects yet.", "Projects you are in show up here.");
   return dataTable(
-    [{ head: "Project" }, { head: "Role" }, { head: "Board" }, { head: "Coordinator" }, { head: "Sessions", right: true }],
+    [{ head: "Project" }, { head: "Role" }, { head: "Integrations" }, { head: "Coordinator" }, { head: "Sessions", right: true }],
     rows.map((p) => [
       h("div", null, h("div", { text: safe(p.name) || safe(p.slug) }), mono(p.slug || p.id)),
       pill(p.role || "member", p.role === "owner" ? "acc" : ""),
@@ -57,14 +57,17 @@ function overviewTab(p: ProjectRow): HTMLElement {
       h("dt", { text: "Sessions" }), h("dd", { text: `${o.active} active, ${o.retired} retired, ${o.moved} moved, ${o.stale} stale` }),
       h("dt", { text: "Repository" }), h("dd", null, mono(p.gitRemote)),
     )),
-    h("div", { class: "panel pad" }, h("h2", { text: "Linear board" }), l.configured
-      ? h("dl", { class: "kv" },
-        h("dt", { text: "Mode" }), h("dd", { text: dash(l.mode) }),
-        h("dt", { text: "Teams" }), h("dd", { text: l.teams.map((t) => safe(t.name || t.id) + (t.isDefault ? " (default)" : "")).join(", ") || "-" }),
-        h("dt", { text: "Projects" }), h("dd", { text: l.projects.map((x) => safe(x.name || x.id) + (x.closes ? ` (closes: ${safe(x.closes)})` : "")).join(", ") || "-" }),
-        h("dt", { text: "Agents may cancel" }), h("dd", { text: l.cancelKinds === null ? "Not reported" : l.cancelKinds.length ? l.cancelKinds.map(safe).join(", ") : "No kinds" }),
-        h("dt", { text: "Names stored" }), h("dd", { text: l.namesAt ? ago(l.namesAt) : "-" }))
-      : h("p", { class: "muted", text: l.unreadable ? "The board couldn't be read." : "No Linear board is linked to this project." })),
+    h("div", { class: "panel pad" }, h("div", { class: "sec-head" }, h("h2", { text: "Integrations" })), h("div", { class: "stack" },
+      h("h3", { class: "provider-name", text: "Linear" }),
+      l.configured
+        ? h("dl", { class: "kv" },
+          h("dt", { text: "Mode" }), h("dd", { text: dash(l.mode) }),
+          h("dt", { text: "Teams" }), h("dd", { text: l.teams.map((t) => safe(t.name || t.id) + (t.isDefault ? " (default)" : "")).join(", ") || "-" }),
+          h("dt", { text: "Projects" }), h("dd", { text: l.projects.map((x) => safe(x.name || x.id) + (x.closes ? ` (closes: ${safe(x.closes)})` : "")).join(", ") || "-" }),
+          h("dt", { text: "Agents may cancel" }), h("dd", { text: l.cancelKinds === null ? "Not reported" : l.cancelKinds.length ? l.cancelKinds.map(safe).join(", ") : "No kinds" }),
+          h("dt", { text: "Names stored" }), h("dd", { text: l.namesAt ? ago(l.namesAt) : "-" }))
+        : h("p", { class: "muted", text: l.unreadable ? "The board couldn't be read." : "No Linear board is linked to this project." }),
+      h("div", { class: "card-foot" }, h("a", { class: "btn sm", href: "#/integrations/linear/binding", text: "Open Linear" })))),
     o.sessions.length
       ? h("div", { class: "panel" }, dataTable([{ head: "Session" }, { head: "Owner" }, { head: "Agent" }, { head: "Status" }],
         o.sessions.map((s) => [mono(s.name), dash(s.owner), dash(s.agent), dash(s.status)])))

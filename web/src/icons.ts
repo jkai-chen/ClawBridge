@@ -9,7 +9,7 @@ export const ICONS: Record<string, readonly [string, Record<string, string | num
   needs: [['path', { d: 'M8 2.5a4 4 0 0 0-4 4V9l-1.25 2.25h10.5L12 9V6.5a4 4 0 0 0-4-4z' }], ['path', { d: 'M6.5 13.25a1.6 1.6 0 0 0 3 0' }]],
   sessions: [['rect', { x: 2, y: 3, width: 12, height: 10, rx: 1.5 }], ['path', { d: 'm5 7 2 1.5L5 10M8.5 10.5H11' }]],
   projects: [['path', { d: 'M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.4 1.5h4.8A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z' }]],
-  linear: [['circle', { cx: 4, cy: 4, r: 1.75 }], ['circle', { cx: 4, cy: 12, r: 1.75 }], ['circle', { cx: 12, cy: 8, r: 1.75 }], ['path', { d: 'M4 5.75v4.5M5.5 5.2C9 5 12 5.5 12 6.25' }]],
+  integrations: [['rect', { x: 2, y: 2.5, width: 5, height: 5, rx: 1.25 }], ['rect', { x: 9, y: 8.5, width: 5, height: 5, rx: 1.25 }], ['path', { d: 'M7 5h2.5a1.5 1.5 0 0 1 1.5 1.5v2M9 11H6.5A1.5 1.5 0 0 1 5 9.5v-2' }]],
   teams: [['circle', { cx: 6, cy: 5.5, r: 2.25 }], ['path', { d: 'M1.75 13c.4-2.4 2.1-3.6 4.25-3.6s3.85 1.2 4.25 3.6' }], ['circle', { cx: 11.5, cy: 6.5, r: 1.75 }], ['path', { d: 'M11.2 10c1.7.1 2.8 1.2 3.1 3' }]],
   dispatcher: [['path', { d: 'M8 2.5v4M8 6.5 4 10v3.5M8 6.5l4 3.5v3.5' }]],
   account: [['circle', { cx: 8, cy: 5.5, r: 2.5 }], ['path', { d: 'M3 13.5c.5-2.5 2.5-4 5-4s4.5 1.5 5 4' }]],

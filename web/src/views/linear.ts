@@ -2,14 +2,16 @@
 // disabled until P3. Linear text (titles, names, notes) is untrusted and
 // reaches the page through textContent only.
 import { h, type Child } from "../dom";
+import { CallError } from "../api";
+import { ConnectionError } from "../transport";
 import { plural } from "../format";
-import { routeArg } from "../router";
+import { routeArg2 } from "../router";
 import {
   parseBinding, parseCancelKinds, parseConnection, parseIntake, parseIssue, parseProjectStatus, parseQueue, parseTasks, parseViews,
   type BindingPage, type Issue, type LinearProfile,
 } from "../pages";
-import { emptyBlock, safe, titleRow, type View, type ViewCtx } from "./common";
-import { ago, call, dash, dataTable, disabledWrite, linkTabs, loadInto, meter, mono, note, pill, plainText } from "./pagekit";
+import { codebox, emptyBlock, safe, titleRow, type View, type ViewCtx } from "./common";
+import { ago, call, dash, dataTable, disabledWrite, linkTabs, loadInto, meter, skeleton, mono, note, pill, plainText } from "./pagekit";
 
 export const LINEAR_TABS: [string, string][] = [
   ["connection", "Connection"], ["binding", "Binding"], ["tasks", "Tasks"], ["intake", "Intake"],
@@ -222,13 +224,62 @@ const PAGES: Record<string, (ctx: ViewCtx, host: HTMLElement) => void> = {
   cancel: cancelPage, status: statusPage, views: viewsPage, queue: queuePage,
 };
 
-export const linearView: View = (ctx: ViewCtx) => {
-  const arg = routeArg(location.hash);
+const BASE = "integrations/linear";
+
+/** The Linear section: #/integrations/linear[/tab]. */
+export const linearSection: View = (ctx: ViewCtx) => {
+  const arg = routeArg2(location.hash);
   const tab = arg in PAGES ? arg : "binding";
   const host = h("div", null);
   ctx.root.replaceChildren(
+    h("div", { class: "crumb" }, h("a", { href: "#/integrations", text: "Project integrations" })),
     titleRow("Linear", "Connection, binding and what flows through them. Read only in this build."),
-    h("div", { class: "subnav" }, linkTabs(LINEAR_TABS, tab, "linear", "Linear")),
+    h("div", { class: "subnav" }, linkTabs(LINEAR_TABS, tab, BASE, "Linear")),
     host);
   (PAGES[tab] ?? bindingPage)(ctx, host);
 };
+
+/** The Linear card on the integrations landing: connection state, workspace and the linked board. */
+export function linearCard(ctx: ViewCtx, host: HTMLElement): void {
+  const card = (...kids: Child[]): HTMLElement => h("div", { class: "panel pad", "data-provider": "linear" }, ...kids);
+  const head = (status: HTMLElement): HTMLElement => h("div", { class: "sec-head" }, h("h2", { text: "Linear" }), status);
+  const run = (): void => {
+    host.replaceChildren(skeleton());
+    void (async () => {
+      const conn = await call(ctx, "linear.connection", {}, parseConnection)();
+      let binding: BindingPage | null = null;
+      let bindingError = "";
+      if (conn.profiles.length > 0) {
+        try { binding = await call(ctx, "linear.binding", {}, parseBinding)(); } catch (e) {
+          if (e instanceof ConnectionError) throw e;
+          bindingError = e instanceof CallError ? e.message : String(e);
+        }
+      }
+      return { profiles: conn.profiles, binding, bindingError };
+    })().then(({ profiles, binding, bindingError }) => {
+      if (!ctx.isCurrent()) return;
+      const open = h("div", { class: "card-foot" }, h("a", { class: "btn sm", href: "#/integrations/linear", text: "Open Linear" }));
+      if (profiles.length === 0) {
+        host.replaceChildren(card(head(pill("Not connected")), h("p", { text: "Connect it from your terminal:" }), codebox("clawbridge linear connect --name NAME --access read"), open));
+        return;
+      }
+      const b = binding?.binding;
+      const teams = b && b.configured ? b.teamIds.map((t) => nameOf(binding, t)).join(", ") : "";
+      host.replaceChildren(card(head(pill("Connected", "acc")),
+        h("dl", { class: "kv" },
+          h("dt", { text: profiles.length === 1 ? "Connection" : "Connections" }),
+          h("dd", { text: profiles.map((p) => `${dash(p.name || p.id)} (${dash(p.workspace)})`).join(", ") }),
+          h("dt", { text: "Board" }),
+          h("dd", { text: bindingError ? "The board couldn't be read" : b && b.configured ? teams || "Board linked" : "No board linked" })),
+        bindingError ? note(bindingError) : null,
+        open));
+    }, (e: unknown) => {
+      if (!ctx.isCurrent()) return;
+      if (e instanceof ConnectionError) return ctx.connection(e.kind);
+      host.replaceChildren(card(head(pill("Couldn't be read")),
+        note(safe(e instanceof CallError ? e.message : String(e))),
+        h("button", { class: "btn sm", type: "button", on: { click: run }, text: "Retry" })));
+    });
+  };
+  run();
+}

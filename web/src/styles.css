@@ -190,6 +190,8 @@ td.who { white-space: nowrap; }
 .pill .dot { width: 6px; height: 6px; background: currentColor; }
 
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: var(--control-height); padding: 0 12px; border-radius: var(--radius-control); border: 1px solid var(--control); background: var(--surface); font-weight: 500; cursor: pointer; white-space: nowrap; transition: background-color var(--t-hover) ease, transform var(--t-press) var(--ease-out); }
+.provider-name { font-size: var(--fs-body); line-height: 20px; font-weight: 600; margin-bottom: 4px; }
+.card-foot { margin-top: 12px; }
 .btn svg { width: 16px; height: 16px; }
 .btn:hover { background: var(--raised); }
 .btn:active { transform: translateY(1px); }

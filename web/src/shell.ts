@@ -8,7 +8,7 @@ import { ConnectionError, type ConnState } from "./transport";
 import { accountView } from "./views/account";
 import { dispatcherView } from "./views/dispatcher";
 import { doctorView } from "./views/doctor";
-import { linearView } from "./views/linear";
+import { integrationsView } from "./views/integrations";
 import { projectsView } from "./views/projects";
 import { teamsView } from "./views/teams";
 import { overviewView } from "./views/overview";
@@ -28,7 +28,7 @@ const NAV: NavItem[] = [
   { id: "sessions", label: "Sessions", icon: "sessions" },
   { id: "projects", label: "Projects", icon: "projects" },
   { id: "teams", label: "Teams & People", icon: "teams" },
-  { id: "linear", label: "Linear", icon: "linear" },
+  { id: "integrations", label: "Project integrations", icon: "integrations" },
   { id: "dispatcher", label: "Dispatcher", icon: "dispatcher" },
   { id: "account", label: "Account", icon: "account" },
   { id: "doctor", label: "Doctor", icon: "doctor" },
@@ -41,7 +41,7 @@ const VIEWS: Record<RouteId, View> = {
   sessions: sessionsView,
   projects: projectsView,
   teams: teamsView,
-  linear: linearView,
+  integrations: integrationsView,
   dispatcher: dispatcherView,
   account: accountView,
   doctor: doctorView,

@@ -283,10 +283,24 @@ func TestWinPipeSurvivesClientsThatLeaveAtOnce(t *testing.T) {
 	}
 	p, _ := windows.UTF16PtrFromString(name)
 	for i := 0; i < 5; i++ {
-		h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil,
-			windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_ANONYMOUS, 0)
-		if err != nil {
-			t.Fatal(err)
+		// The server makes its next instance only after it wakes from the
+		// last connect, so a busy or briefly missing pipe is waited out as
+		// the real client does, for up to 2 s. x/sys has no WaitNamedPipe.
+		var h windows.Handle
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			h, err = windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil,
+				windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_ANONYMOUS, 0)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, windows.ERROR_PIPE_BUSY) && !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+				t.Fatal(err)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no free pipe instance after 2s: %v", err)
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
 		windows.CloseHandle(h)
 	}

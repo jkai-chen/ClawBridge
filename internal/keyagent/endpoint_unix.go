@@ -19,6 +19,8 @@ var (
 	getenv = os.Getenv
 	// fallbackRoot is where the Linux fallback directory lives.
 	fallbackRoot = "/tmp"
+	// mkdir makes the agent's directory.
+	mkdir = os.Mkdir
 )
 
 // maxSockPath is the longest socket path that fits sockaddr_un on macOS
@@ -46,11 +48,16 @@ func endpointFor(state string, create bool) (string, error) {
 	}
 	if create {
 		if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
-			if err = os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			// Only a directory this call made is ours to chmod. If another
+			// process won the race to make it, it is only checked below,
+			// since MakePrivate follows symlinks.
+			switch err = mkdir(dir, 0o700); {
+			case err == nil:
+				if err = fsprivate.MakePrivate(dir); err != nil {
+					return "", errors.New("cannot make the key agent's directory " + dir + " private")
+				}
+			case !errors.Is(err, fs.ErrExist):
 				return "", errors.New("cannot make the key agent's directory " + dir)
-			}
-			if err = fsprivate.MakePrivate(dir); err != nil {
-				return "", errors.New("cannot make the key agent's directory " + dir + " private")
 			}
 		}
 	}

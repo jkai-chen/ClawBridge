@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -73,6 +74,9 @@ type winAgent struct {
 func winServe(t *testing.T, opts Options) *winAgent {
 	t.Helper()
 	state := winFixture(t)
+	if opts.ServerOrigin == "" {
+		opts.ServerOrigin = winOrig
+	}
 	oS, oI := stateCheckEvery, idleCheckEvery
 	stateCheckEvery, idleCheckEvery = 20*time.Millisecond, 20*time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,7 +203,7 @@ func TestWinPipeSecondInstance(t *testing.T) {
 	winServe(t, Options{})
 	// A second agent for the same state is refused as already running.
 	key := append([]byte(nil), winKey...)
-	if err := Serve(context.Background(), winState, winKid, key, Options{}); !errors.Is(err, ErrAlreadyRunning) {
+	if err := Serve(context.Background(), winState, winKid, key, Options{ServerOrigin: winOrig}); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("got %v, want ErrAlreadyRunning", err)
 	}
 	// The name cannot be squatted while the agent holds it.
@@ -218,6 +222,52 @@ func TestWinPipeSecondInstance(t *testing.T) {
 	// The agent still answers.
 	if _, err = Dial(winState); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestWinPipeDACLIsOnlyTheUser reads the live pipe's access control back:
+// one ACE, an allow for the current user's SID, and nothing else. A pipe
+// made without the security descriptor would carry the default DACL instead.
+func TestWinPipeDACLIsOnlyTheUser(t *testing.T) {
+	winServe(t, Options{})
+	canon, _ := canonicalState(winState)
+	name, err := endpointFor(canon, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := windows.UTF16PtrFromString(name)
+	// READ_CONTROL alone, with SECURITY_ANONYMOUS as the dialer sets it.
+	h, err := windows.CreateFile(p, windows.READ_CONTROL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil,
+		windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_ANONYMOUS, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(h)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_KERNEL_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil {
+		t.Fatalf("no DACL: %v", err)
+	}
+	if acl.AceCount != 1 {
+		t.Fatalf("the pipe has %d ACEs, want 1", acl.AceCount)
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err = windows.GetAce(acl, 0, &ace); err != nil {
+		t.Fatal(err)
+	}
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+		t.Fatalf("ACE type %d is not an allow", ace.Header.AceType)
+	}
+	want, err := userSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (*windows.SID)(unsafe.Pointer(&ace.SidStart)).String(); got != want {
+		t.Fatalf("the ACE grants %s, want the current user %s", got, want)
 	}
 }
 

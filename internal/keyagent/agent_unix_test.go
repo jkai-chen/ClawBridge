@@ -117,6 +117,9 @@ func start(t *testing.T, opts Options) *agentT {
 
 func startOn(t *testing.T, state string, opts Options) *agentT {
 	t.Helper()
+	if opts.ServerOrigin == "" {
+		opts.ServerOrigin = testOrigin
+	}
 	a := &agentT{state: state, key: append([]byte(nil), fixKey...), done: make(chan error, 1)}
 	afterOpen = func(s *sealed.Store) { a.once.Do(func() { a.store = s }) }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -622,7 +625,7 @@ func TestSecondServeFailsWhileAnAgentLives(t *testing.T) {
 	key := append([]byte(nil), fixKey...)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	err := Serve(ctx, a.state, fixKid, key, Options{})
+	err := Serve(ctx, a.state, fixKid, key, Options{ServerOrigin: testOrigin})
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("%v", err)
 	}
@@ -639,10 +642,10 @@ func TestServeRefusesAWrongKeyOrKid(t *testing.T) {
 	seams(t)
 	state := newState(t)
 	bad := bytes.Repeat([]byte{7}, 32)
-	if err := Serve(context.Background(), state, "0000000000000000", bad, Options{}); err == nil {
+	if err := Serve(context.Background(), state, "0000000000000000", bad, Options{ServerOrigin: testOrigin}); err == nil {
 		t.Fatal("served with a kid that is not data.key's")
 	}
-	if err := Serve(context.Background(), state, "short", bad, Options{}); err == nil {
+	if err := Serve(context.Background(), state, "short", bad, Options{ServerOrigin: testOrigin}); err == nil {
 		t.Fatal("served with a malformed kid")
 	}
 }

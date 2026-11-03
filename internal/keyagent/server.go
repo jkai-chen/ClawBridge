@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"clawbridge/internal/sealed"
@@ -29,8 +30,8 @@ type Options struct {
 	// time minus this machine's time, as devicesign.Signer keeps it). sign
 	// accepts a timestamp within MaxTimestampSkew of now plus this offset.
 	ClockOffset time.Duration
-	// ServerOrigin, when set, is the only origin sign serves (compared in
-	// lower case); the profile's server origin.
+	// ServerOrigin is the only origin sign serves (compared in lower case);
+	// the profile's server origin. Serve refuses to start without it.
 	ServerOrigin string
 	// Logf, when set, receives one line for each hardening step that did
 	// not apply. It is never given key material.
@@ -48,7 +49,23 @@ var (
 	// afterOpen is a test hook given the store the agent serves.
 	afterOpen func(*sealed.Store)
 	clock     = time.Now
+	// listenFor makes the agent's listener; tests replace it with a fake.
+	listenFor = listen
+	// acceptBackoffMin and acceptBackoffMax bound the pause after a
+	// temporary accept error. The pause doubles on each failure in a row.
+	acceptBackoffMin = 5 * time.Millisecond
+	acceptBackoffMax = time.Second
 )
+
+// maxConns is how many connections the agent serves at once. When all are
+// busy the accept loop waits for one to finish, and further clients wait in
+// the socket's backlog, so a same-user program cannot make the agent run
+// out of descriptors or memory.
+const maxConns = 16
+
+// errNoOrigin is Serve's refusal to run without the profile's server
+// origin, since sign would then accept any origin.
+var errNoOrigin = errors.New("the key agent needs the profile's server origin")
 
 // stateHash is the first 16 hex digits of the SHA-256 of the canonical
 // state directory path.
@@ -78,6 +95,9 @@ func canonicalState(stateDir string) (string, error) {
 // directory, and any setup failure.
 func Serve(ctx context.Context, stateDir, kid string, key []byte, opts Options) error {
 	defer zero(key)
+	if opts.ServerOrigin == "" {
+		return errNoOrigin
+	}
 	state, err := canonicalState(stateDir)
 	if err != nil {
 		return err
@@ -99,7 +119,7 @@ func Serve(ctx context.Context, stateDir, kid string, key []byte, opts Options) 
 	if afterOpen != nil {
 		afterOpen(store)
 	}
-	ln, err := listen(state)
+	ln, err := listenFor(state)
 	if err != nil {
 		return err
 	}
@@ -113,22 +133,12 @@ func Serve(ctx context.Context, stateDir, kid string, key []byte, opts Options) 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				h.serveConn(c)
-			}()
-		}
+		acceptLoop(ctx, ln, h, &wg, cancel)
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		h.watch(ctx, state, cancel)
+		h.watch(ctx, state)
 	}()
 
 	<-ctx.Done()
@@ -137,9 +147,79 @@ func Serve(ctx context.Context, stateDir, kid string, key []byte, opts Options) 
 	return nil
 }
 
-// watch ends the agent when the idle timeout passes or the state directory
-// is gone.
-func (h *handler) watch(ctx context.Context, state string, stop func()) {
+// acceptLoop serves connections until ctx ends. A temporary accept error is
+// retried with a growing pause. Any other error ends the agent through
+// cancel, so it never sits unreachable with the key unlocked.
+func acceptLoop(ctx context.Context, ln listener, h *handler, wg *sync.WaitGroup, cancel func()) {
+	slots := make(chan struct{}, maxConns)
+	var pause time.Duration
+	for {
+		// A slot is taken before accepting, so a full agent leaves further
+		// clients in the backlog instead of holding their descriptors.
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		c, err := ln.Accept()
+		if err != nil {
+			<-slots
+			if ctx.Err() != nil {
+				return
+			}
+			if !temporaryAccept(err) {
+				cancel()
+				return
+			}
+			pause = nextPause(pause)
+			t := time.NewTimer(pause)
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+				return
+			}
+			continue
+		}
+		pause = 0
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			h.serveConn(c)
+		}()
+	}
+}
+
+// nextPause is the pause after a temporary accept error, given the last.
+func nextPause(last time.Duration) time.Duration {
+	if last <= 0 {
+		return acceptBackoffMin
+	}
+	if last *= 2; last > acceptBackoffMax {
+		last = acceptBackoffMax
+	}
+	return last
+}
+
+// temporaryAccept reports whether an accept error may pass: running out of
+// descriptors, an aborted connection, an interrupted call or a timeout.
+func temporaryAccept(err error) bool {
+	for _, e := range []error{syscall.EMFILE, syscall.ENFILE, syscall.ECONNABORTED, syscall.EINTR} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	var ne interface {
+		Timeout() bool
+		Temporary() bool
+	}
+	return errors.As(err, &ne) && (ne.Timeout() || ne.Temporary())
+}
+
+// watch locks the agent and ends it when the idle timeout passes or the
+// state directory is gone.
+func (h *handler) watch(ctx context.Context, state string) {
 	idle := time.NewTicker(idleCheckEvery)
 	defer idle.Stop()
 	dir := time.NewTicker(stateCheckEvery)
@@ -149,13 +229,12 @@ func (h *handler) watch(ctx context.Context, state string, stop func()) {
 		case <-ctx.Done():
 			return
 		case <-idle.C:
-			if h.idleExpired() {
-				stop()
+			if h.lockIfIdle() {
 				return
 			}
 		case <-dir.C:
 			if _, err := os.Stat(state); errors.Is(err, os.ErrNotExist) {
-				stop()
+				h.lock()
 				return
 			}
 		}

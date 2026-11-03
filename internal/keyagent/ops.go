@@ -16,6 +16,10 @@ import (
 	"clawbridge/internal/sealed"
 )
 
+// beforeDo is a test hook called when a request reaches the handler, before
+// it takes the mutex.
+var beforeDo func(*request)
+
 // wrongPassDelay is the pause after a wrong passphrase to rotate, the same
 // second the CLI waits; tests shorten it.
 var wrongPassDelay = time.Second
@@ -36,9 +40,10 @@ type handler struct {
 
 	idle    time.Duration
 	offset  time.Duration // the profile's clock correction: server time minus local
-	origin  string        // the only origin sign serves; "" is any
+	origin  string        // the only origin sign serves
 	now     func() time.Time
 	lastReq time.Time // under mu
+	locked  bool      // under mu; set once the key is dropped
 	stop    func()    // asks Serve to exit
 }
 
@@ -57,17 +62,46 @@ func (h *handler) idleLeft() int64 {
 	return int64(left / time.Second)
 }
 
-// idleExpired reports whether the idle timeout has passed.
-func (h *handler) idleExpired() bool {
+// lockLocked drops the key and ends the agent. h.mu is held. The key goes
+// before any reply is written, and every request that runs after it is
+// answered keys_locked, so nothing is served from a key that a lock, the
+// idle timeout or a vanished state directory has already ended.
+func (h *handler) lockLocked() {
+	h.locked = true
+	h.store.Lock()
+	h.stop()
+}
+
+// lock is lockLocked for a caller that does not hold h.mu.
+func (h *handler) lock() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.idle > 0 && h.now().Sub(h.lastReq) >= h.idle
+	h.lockLocked()
+}
+
+// lockIfIdle locks the agent when the idle timeout has passed and reports
+// whether it did.
+func (h *handler) lockIfIdle() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.idle <= 0 || h.now().Sub(h.lastReq) < h.idle {
+		return false
+	}
+	h.lockLocked()
+	return true
 }
 
 // do runs one request and returns its response. It returns only fixed
 // errors.
 func (h *handler) do(req *request) *response {
+	if beforeDo != nil {
+		beforeDo(req)
+	}
 	h.mu.Lock()
+	if h.locked {
+		h.mu.Unlock()
+		return failure(newError(CodeLocked))
+	}
 	resp, delay := h.dispatch(req)
 	h.mu.Unlock()
 	// The pause after a wrong passphrase is taken with the lock released, so
@@ -107,7 +141,7 @@ func (h *handler) dispatch(req *request) (resp *response, delay time.Duration) {
 			delay = wrongPassDelay
 		}
 	case OpLock:
-		h.stop()
+		h.lockLocked()
 	default:
 		err = newError(CodeUnknownOp)
 	}

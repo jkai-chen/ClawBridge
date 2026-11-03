@@ -1,4 +1,11 @@
-# Unreleased
+# ClawBridge v1.0.1 (released 3 Nov)
+
+**ClawBridge 1.0.1** is a fixes release on 1.0.0. Intake holds an issue's title and description to what the trusted
+person saw, and reads Linear's history before flagging a change. The dispatcher escalates a claim from an untrusted
+session at once, and its model sees whether the session is trusted for each domain. The watcher wakes for a due intake
+re-check and for a new claim instead of waiting for its next tick. Notifiers type only while the session's agent runs
+and say when their sign-in route changed. An issue read shows its due date, and a project's milestones can be read.
+No schema change: an upgrade from 1.0.0 is a drop-in.
 
 ## Operations
 

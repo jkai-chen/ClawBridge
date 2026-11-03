@@ -44,9 +44,9 @@ const (
 // Serve's results when the server stops by itself.
 var (
 	// ErrIdle: no tab has been connected to /events for IdleGrace.
-	ErrIdle = errors.New("no tab has been connected for a while")
+	ErrIdle = errors.New("no window or tab has been connected for a while")
 	// ErrNeverConnected: no tab connected to /events within StartGrace.
-	ErrNeverConnected = errors.New("no tab connected after the start")
+	ErrNeverConnected = errors.New("no window or tab connected after the start")
 )
 
 // AlreadyRunning is New's error when another UI holds the lock.
@@ -74,6 +74,11 @@ type Config struct {
 	// reaches the browser (C2).
 	Platform string
 	Opener   Opener
+	// LaunchDir, if not empty, is where this server's own launch files go
+	// instead of the state directory: a Linux snap browser's private
+	// ~/snap/<name>/common/clawbridge-ui/<hash> (GUI-DESIGN §12.8). Any
+	// other value is refused.
+	LaunchDir string
 	// Log gets one line per request: method, path, status (C12).
 	Log io.Writer
 	// Bundle holds index.html and the assets; the embedded placeholder by
@@ -187,11 +192,22 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, dir: dir, platform: cfg.Platform, opener: cfg.Opener, unlock: unlock,
 		tokens: newTokens(cfg.LaunchTTL), log: &logger{w: cfg.Log}, bundle: bundle, bundleID: bundleID, index: index}
 	// The lock is ours: launch files left by a crash are stale.
-	if old, _ := filepath.Glob(filepath.Join(dir, "launch-*.html")); old != nil {
+	stale := []string{dir}
+	if cfg.LaunchDir != "" {
+		ld, err := s.launchDirFor(cfg.LaunchDir)
+		if err != nil {
+			s.Close()
+			return nil, err
+		}
+		stale = append(stale, ld)
+	}
+	for _, d := range stale {
+		old, _ := filepath.Glob(filepath.Join(d, "launch-*.html"))
 		for _, f := range old {
 			os.Remove(f)
 		}
 	}
+	sweepSnapLaunchFiles(filepath.Base(dir))
 	s.ln, err = net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Port)))
 	if err != nil {
 		s.Close()
@@ -215,11 +231,17 @@ func New(cfg Config) (*Server, error) {
 // ProfileDir is the state directory of one profile: base/<12 hex of the
 // sha256 of the cleaned absolute profile path>.
 func ProfileDir(base, profile string) string {
+	return filepath.Join(base, profileHash(profile))
+}
+
+// profileHash is the 12 hex of the sha256 of the cleaned absolute profile
+// path: the name of the profile's state directory.
+func profileHash(profile string) string {
 	if abs, err := filepath.Abs(profile); err == nil {
 		profile = abs
 	}
 	sum := sha256.Sum256([]byte(filepath.Clean(profile)))
-	return filepath.Join(base, hex.EncodeToString(sum[:])[:12])
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 // BundleID names the bundle being served: "placeholder" for the hand-written

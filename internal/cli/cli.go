@@ -58,7 +58,7 @@ Commands: setup --local, project create SLUG, register [NAME], sessions, send TO
           serve, operator principal-unbind|workspace-clear-domains ... --confirm (on the server host),
           sync, purge-expired, principal-unbind EMAIL --confirm [--allow-previous],
           outbox list [--dead] | flush | retry ID | drop ID --confirm drop (writes waiting on this machine),
-          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], ui [--no-open] [--port N] (the web UI in your browser, on this machine only),
+          workspace-domains DOMAIN...|--clear, doctor, tui [--screen SCREEN], ui [--no-open] [--port N] [--browser] (the web UI in an app window, or a browser tab with --browser; on this machine only),
           launch-command --session NAME [--agent claude-code|codex] (the line that starts your own session's agent), version,
           cloud check [infra|server|version|workspace|linear-app|backups|all], cloud secret set KEY (own-server onboarding),
           project context-watch show|set --file FILE --expected-revision N,

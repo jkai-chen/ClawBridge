@@ -31,9 +31,10 @@
 
 ## Sessions
 
-- **`clawbridge ui` opens a local web UI (read-only for now: overview, needs you, sessions, projects, teams, project
-  integrations, dispatcher, account, doctor and settings) on 127.0.0.1, stopping a minute after its tab closes.** Docs:
-  docs/usage.md, "Web interface". No schema change. Linear config scope: none.
+- **`clawbridge ui` opens a local web UI on 127.0.0.1 in its own app window, or a browser tab with `--browser`. It is
+  read-only for now (overview, needs you, sessions, projects, teams, project integrations, dispatcher, account, doctor
+  and settings) and stops a minute after its window or tab closes.** Docs: docs/usage.md, "Web interface". No schema
+  change. Linear config scope: none.
 - **`clawbridge launch-command --session NAME [--agent claude-code|codex]` prints the shell line that starts one of your
   own sessions' agents in your terminal; the web UI's Sessions drawer has a Copy button for the same line.** It holds
   only `CLAWBRIDGE_SESSION`, `CLAWBRIDGE_INSTANCE` and the agent with its MCP flag, never a key or token, and is refused

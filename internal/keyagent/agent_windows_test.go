@@ -271,6 +271,39 @@ func TestWinPipeDACLIsOnlyTheUser(t *testing.T) {
 	}
 }
 
+// TestWinPipeSurvivesClientsThatLeaveAtOnce opens the pipe and closes it
+// without sending, a few times over. Each leaves the server's instance with
+// a failed or empty connect; the agent must keep serving and keep the name.
+func TestWinPipeSurvivesClientsThatLeaveAtOnce(t *testing.T) {
+	a := winServe(t, Options{})
+	canon, _ := canonicalState(winState)
+	name, err := endpointFor(canon, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := windows.UTF16PtrFromString(name)
+	for i := 0; i < 5; i++ {
+		h, err := windows.CreateFile(p, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil,
+			windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_ANONYMOUS, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		windows.CloseHandle(h)
+	}
+	c, err := Dial(winState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := c.Status(); err != nil || st.Locked {
+		t.Fatalf("%+v %v", st, err)
+	}
+	select {
+	case err := <-a.done:
+		t.Fatalf("the agent ended: %v", err)
+	default:
+	}
+}
+
 // squatPipe serves a raw pipe the test controls and records what the client
 // sends. The connection is accepted only once.
 type squatPipe struct {

@@ -1,0 +1,17 @@
+{
+  "description": "linear.queue in local mode says it is not available",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.queue",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "available": false,
+      "reason": "The write queue is for hosted workspaces."
+    }
+  }
+}

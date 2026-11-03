@@ -1,0 +1,84 @@
+{
+  "description": "linear.binding answers the binding v2 with the names stored beside it",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.binding",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "binding": {
+        "configured": true,
+        "default_team_id": "team_atl",
+        "lanes": [
+          {
+            "default_team_id": "team_atl",
+            "name": "backend",
+            "write_team_ids": [
+              "team_atl"
+            ]
+          }
+        ],
+        "mapping_version": 2,
+        "mode": "project",
+        "other_teams": {
+          "team_ops": "read"
+        },
+        "parent_team_id": "",
+        "project_ids": [
+          "lp_billing"
+        ],
+        "provider": "linear",
+        "revision": 7,
+        "team_ids": [
+          "team_atl",
+          "team_hrb"
+        ],
+        "teams_without_project": [],
+        "unpinned": "read_only",
+        "updated_at": "2026-10-30T09:00:00Z"
+      },
+      "stored": {
+        "linear": {
+          "configured": true,
+          "mode": "project",
+          "names_updated_at": "2026-10-30T09:00:00Z",
+          "projects": [
+            {
+              "closes": "agent",
+              "id": "lp_billing",
+              "name": "Billing retry"
+            }
+          ],
+          "status_policy": {
+            "agent_may_cancel_kinds": [
+              "duplicate"
+            ]
+          },
+          "teams": [
+            {
+              "default": true,
+              "id": "team_atl",
+              "name": "Atlas"
+            },
+            {
+              "id": "team_hrb",
+              "name": "Harbor"
+            }
+          ]
+        },
+        "role": "owner"
+      },
+      "without_project": [
+        {
+          "inert": true,
+          "name": "Harbor",
+          "team_id": "team_hrb"
+        }
+      ]
+    }
+  }
+}

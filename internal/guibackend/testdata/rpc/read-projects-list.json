@@ -1,0 +1,99 @@
+{
+  "description": "projects.list answers list_projects with each project's overview",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "projects.list",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "data": {
+        "projects": [
+          {
+            "git_remote": "git@example.test:northwind/atlas-api.git",
+            "id": "prj_atlas",
+            "name": "Atlas API",
+            "role": "owner",
+            "slug": "atlas-api"
+          },
+          {
+            "id": "prj_harbor",
+            "name": "Harbor Web",
+            "role": "member",
+            "slug": "harbor-web"
+          }
+        ]
+      },
+      "overviews": {
+        "prj_atlas": {
+          "coordinator": {
+            "name": "lead-atlas",
+            "status": "active"
+          },
+          "counts": {
+            "active": 2,
+            "moved": 0,
+            "retired": 1,
+            "stale": 0
+          },
+          "linear": {
+            "configured": true,
+            "mode": "project",
+            "names_updated_at": "2026-10-30T09:00:00Z",
+            "projects": [
+              {
+                "closes": "agent",
+                "id": "lp_billing",
+                "name": "Billing retry"
+              }
+            ],
+            "status_policy": {
+              "agent_may_cancel_kinds": [
+                "duplicate"
+              ]
+            },
+            "teams": [
+              {
+                "default": true,
+                "id": "team_atl",
+                "name": "Atlas"
+              },
+              {
+                "id": "team_hrb",
+                "name": "Harbor"
+              }
+            ]
+          },
+          "project": {
+            "role": "owner"
+          },
+          "sessions": [
+            {
+              "agent_kind": "claude-code",
+              "id": "ses_1",
+              "name": "atlas/billing-retry",
+              "owner_principal": "mara@example.test",
+              "status": "active"
+            }
+          ]
+        },
+        "prj_harbor": {
+          "counts": {
+            "active": 1
+          },
+          "linear": {
+            "configured": false
+          },
+          "project": {
+            "role": "member"
+          },
+          "sessions": []
+        }
+      },
+      "source": "server"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "description": "linear.queue answers the queued writes and the hour's budget (hosted)",
+  "request": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "linear.queue",
+    "params": {}
+  },
+  "response": {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "available": true,
+      "status": {
+        "budget": {
+          "by": {
+            "agents": 123,
+            "people": 20
+          },
+          "limit": 600,
+          "source": "app",
+          "used": 143,
+          "window_resets_at": "2026-10-31T10:00:00Z"
+        },
+        "outbox": {
+          "dead_24h": 0,
+          "expired_24h": 0,
+          "oldest_queued_age_s": 360,
+          "queued": 1,
+          "sending": 0,
+          "uncertain_24h": 0
+        }
+      },
+      "writes": [
+        {
+          "created_at": "2026-10-31T09:40:00Z",
+          "id": "w_1",
+          "issue": "ATL-212",
+          "operation": "comment",
+          "state": "queued"
+        }
+      ]
+    }
+  }
+}

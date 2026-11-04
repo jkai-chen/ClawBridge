@@ -1,0 +1,17 @@
+{
+  "description": "sessions.list answers the executor's result, source included",
+  "request": {"jsonrpc": "2.0", "id": 4, "method": "sessions.list"},
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 4,
+    "result": {
+      "source": "local-authority",
+      "data": {
+        "sessions": [
+          {"id": "ses_1", "name": "engineer-a", "role": "engineer", "agent_kind": "claude-code", "status": "active", "presence": "active", "stale": false},
+          {"id": "ses_2", "name": "lead", "role": "lead", "agent_kind": "codex", "status": "active", "presence": "idle", "stale": true}
+        ]
+      }
+    }
+  }
+}
